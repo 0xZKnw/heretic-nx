@@ -1,0 +1,51 @@
+schema_version: 2
+model:
+  id: LiquidAI/LFM2.5-1.2B-Thinking
+  revision: f313478934a7612d22991f752959d7a1a8756fec
+objective:
+  primary: benign_task_success
+  robust: {kind: smooth_max, temperature: 0.05, cvar_alpha: 0.80}
+  hard_constraints:
+    capability_relative_drop_max: 0.015
+    calibration_delta_max: 0.015
+    risk_control_delta_max: 0.0
+geometry:
+  scenarios: [fold, language, template, position, quant]
+  folds: 3
+  positions: [last_instruction_token, post_instruction_token]
+  consensus_eigen_min: 0.50
+  consensus_stability_mass: 0.80
+  target_rank_max: 8
+  fisher_rank: 16
+  metric_lambda: 0.001
+scan:
+  prescan: gradient_attribution
+  exact_top_k: 8
+  epsilon: [0.01, 0.03]
+  interaction_probes: 12
+edit:
+  runtime_activation_first: true
+  families: [metric_projector, cayley]
+  sparse_au: true
+  beta_max: 0.80
+route:
+  risk_gate: hard
+  task_gate: calibrated
+  fail_closed: true
+  temporal_budget_tokens: 96
+  temporal_grace_tokens: 8
+  pilot_consensus:
+    status: draft_not_promoted
+    risk_sites: ["L12:block_out", "L13:block_out"]
+    risk_aggregation: any
+    task_site: "L13:block_out"
+search:
+  qcqp: true
+  residual_tpe_trials_max: 24
+  sequential_pruning: true
+backend:
+  search: cuda_nf4
+  validate: [cuda_nf4, gguf_q4_k_m, mlx4, mlx8]
+reproducibility:
+  seeds: [17, 29, 43]
+  deterministic_eval: true

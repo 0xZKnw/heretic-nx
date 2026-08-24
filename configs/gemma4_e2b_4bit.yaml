@@ -1,0 +1,48 @@
+schema_version: 1
+model:
+  id: google/gemma-4-E2B-it
+  revision: 3e22461f65e89153144f8adb70e3b8c2cc9845a7
+  chat_template: model_default
+objective:
+  primary: benign_semantic_refusal
+  cvar_alpha: 0.80
+  constraints:
+    harmful_utility_delta_max: 0.00
+    capability_relative_drop_max: 0.02
+    calibration_ece_delta_max: 0.02
+geometry:
+  positions: [last_instruction_token, first_assistant_token]
+  sketch: frequent_directions
+  sketch_rank: 32
+  protected:
+    harmfulness_rank: 4
+    capability_rank: 8
+  target_rank_max: 8
+  principal_angle_policy:
+    static_min_deg: 45
+    reject_below_deg: 20
+edit:
+  families: [projector, cayley]
+  adapter_first: true
+  beta_max: 0.80
+search:
+  causal_scan_epsilon: 0.03
+  budget_solver: kkt
+  sampler: tpe
+  trials: 60
+  fidelities: [M0, M1, M2, M3]
+backend:
+  name: cuda
+  precision: nf4
+  compute_dtype: bfloat16
+  soft_memory_gb: 6.25
+  hard_memory_gb: 7.25
+  batches:
+    residuals: 1
+    logits: 1
+    generate: 1
+    adapt: 1
+reproducibility:
+  seeds: [17, 29, 43]
+  deterministic_eval: true
+  save_every_stage: true

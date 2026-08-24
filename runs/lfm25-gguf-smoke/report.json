@@ -1,0 +1,31 @@
+{
+  "schema_version": "gguf-smoke-v1",
+  "date": "2026-08-24",
+  "model": "0xzknw/LFM2.5-1.2B-Thinking-Heretic",
+  "format": "GGUF BF16",
+  "gguf_path": "C:\\Users\\crist\\Desktop\\heretic\\outputs\\LFM2.5-1.2B-Thinking-heretic-BF16.gguf",
+  "lm_studio_path": "C:\\Users\\crist\\.lmstudio\\models\\0xzknw\\LFM2.5-1.2B-Thinking-Heretic\\LFM2.5-1.2B-Thinking-heretic-BF16.gguf",
+  "sha256": "D913B88F41696A5FF8DB3B9C8D3768B83CB870B05BC8051CAE0491C454202654",
+  "size_bytes": 2343329856,
+  "source_and_installed_hash_equal": true,
+  "lm_studio": {
+    "model_key": "lfm2.5-1.2b-thinking-heretic",
+    "identifier": "heretic-gguf-bf16",
+    "runtime": "llama.cpp-win-x86_64-nvidia-cuda12-avx2@2.30.0",
+    "context_length": 4096,
+    "gpu_offload": "max",
+    "load_seconds": 3.71,
+    "loaded_gib": 2.18
+  },
+  "generation": {
+    "prompt": "Réponds uniquement par le nombre : 19 multiplié par 23.",
+    "expected_final": "437",
+    "actual_final": "437",
+    "eos_found": true,
+    "predicted_tokens": 220,
+    "tokens_per_second": 76.66,
+    "time_to_first_token_seconds": 0.317,
+    "passed": true
+  },
+  "prime_status": "usable GGUF smoke pass; merged edit remains not PRIME-promoted"
+}

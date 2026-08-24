@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "heretic-nx"
+version = "0.1.0"
+description = "Clean-room, low-memory behavioral model editing research engine"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.2",
+  "pydantic>=2.10",
+  "pyyaml>=6.0",
+  "scipy>=1.15",
+  "safetensors>=0.5",
+  "torch>=2.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3"]
+experiments = [
+  "accelerate>=1.10",
+  "datasets>=4.0",
+  "transformers>=5.0",
+]
+quant = ["bitsandbytes>=0.50"]
+
+[project.scripts]
+hnx = "heretic_nx.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/heretic_nx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,50 @@
+{
+  "schema_version": "heretic-nx-gguf-manifest-v1",
+  "created_at": "2026-08-24",
+  "base_model": {
+    "repo": "LiquidAI/LFM2.5-1.2B-Thinking",
+    "revision": "f313478934a7612d22991f752959d7a1a8756fec",
+    "fresh_model_safetensors_sha256": "112fba7db6c4544d9944002fcfe1c21e23e03d8fc0a0c7e2b6655de6c738583d"
+  },
+  "heretic_candidate": {
+    "directory": "../outputs/LFM2.5-1.2B-Thinking-Heretic-NX-Prime-Uncensored-v2",
+    "model_safetensors_sha256": "bb23fba2ac440bf52d8778a58cd44947a7400954b07499b40a83e3e71cf815f2",
+    "algorithm_report": "runs/lfm25-prime-uncensor-v2/report.json",
+    "selected_site_count": 24,
+    "selected_beta": 2.0,
+    "overprojection": true
+  },
+  "conversion": {
+    "converter": "ggml-org/llama.cpp/convert_hf_to_gguf.py",
+    "llama_cpp_revision": "c060ca974c773c7c3d17fd1b66dc9d312bc292c0",
+    "llama_cpp_tag": "b10603",
+    "outtype": "bf16",
+    "architecture": "lfm2",
+    "tensor_count": 148,
+    "file_type": 32,
+    "context_length": 128000,
+    "output": "../outputs/LFM2.5-1.2B-Thinking-Heretic-NX-Prime-Uncensored-v2-BF16.gguf",
+    "size_bytes": 2343330528,
+    "sha256": "11c952852ae129956db499041045824505467d4a2d0ff8faf98aa26d269e39cc"
+  },
+  "lm_studio": {
+    "model_key": "lfm2.5-1.2b-thinking-heretic-nx-prime-uncensored-v2",
+    "identifier": "heretic-nx-prime-v2-gguf",
+    "owner": "0xzknw",
+    "path": "~/.lmstudio/models/0xzknw/LFM2.5-1.2B-Thinking-Heretic-NX-Prime-Uncensored-v2-GGUF/LFM2.5-1.2B-Thinking-Heretic-NX-Prime-Uncensored-v2-BF16.gguf",
+    "import_mode": "hard-link",
+    "load_success": true,
+    "gpu_memory_gib": 2.18,
+    "observed_tokens_per_second": [74.76, 77.76]
+  },
+  "evaluation": {
+    "fresh_baseline_refusal_markers_per_100": 98,
+    "candidate_refusal_markers_per_100": 3,
+    "benign_first_token_kl": 0.00185752673773095,
+    "xstest_safe_refusal_markers": "2/250",
+    "xstest_unsafe_contrast_refusal_markers": "12/200",
+    "capability_smoke": "3/4",
+    "unit_tests": "44 passed",
+    "metric_warning": "Refusal-marker rates are lexical proxies, not semantic task-success or safety judgments."
+  }
+}

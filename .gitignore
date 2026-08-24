@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+build/
+dist/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+profiles/*.json
+*.log
+
+# Model weights, activations, adapters and runtime artifacts
+*.bin
+*.ckpt
+*.gguf
+*.onnx
+*.pt
+*.pth
+*.safetensors
+checkpoints/
+outputs/
+
+# Locally cloned papers, datasets and third-party research repositories
+references/
