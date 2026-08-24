@@ -1,4 +1,4 @@
-# HERETIC-NX PRIME vNext — research specification
+# HERETIC-NX PRIME — research specification
 
 Date: 2026-08-24
 
@@ -130,7 +130,7 @@ difference-of-means. A multi-token KL pull request exists but is not merged as o
 this research date. The benchmark must pin commits because this baseline evolves
 quickly.
 
-## PRIME vNext engine architecture
+## Heretic NX research architecture
 
 ### A. Grouped data contract
 
@@ -282,7 +282,7 @@ Run from the same pinned official BF16 checkpoint:
 - Heretic v1.4.0 at its documented defaults and equal-budget variants;
 - Heretic master and ARA commit when compatible;
 - current PRIME v2 as an explicitly non-validated historical arm;
-- PRIME vNext portfolio finalists.
+- Residual-Stream and other PRIME portfolio finalists.
 
 The old G1 Heretic-wide report cannot be reused for the new PRIME v2 SHA. Every
 arm receives fresh responses under one runner.

@@ -59,6 +59,27 @@ class ActivationOperator:
     def with_sparse_index(self, sparse_index: Tensor | None) -> "ActivationOperator":
         return replace(self, sparse_index=sparse_index)
 
+    def spectral_norm(self) -> float:
+        """Return ``||A B.T||_2`` from a rank-sized core matrix."""
+
+        if self.rank == 0:
+            return 0.0
+        _qa, ra = torch.linalg.qr(self.a.float(), mode="reduced")
+        _qb, rb = torch.linalg.qr(self.b.float(), mode="reduced")
+        return float(torch.linalg.svdvals(ra @ rb.T).max().item())
+
+    def bounded(self, maximum_norm: float = 1.0) -> "ActivationOperator":
+        """Scale the low-rank map to an auditable Euclidean spectral bound."""
+
+        if maximum_norm <= 0:
+            raise ValueError("maximum_norm must be positive")
+        norm = self.spectral_norm()
+        if not torch.isfinite(torch.tensor(norm)):
+            raise ValueError("operator spectral norm must be finite")
+        if norm <= maximum_norm:
+            return self
+        return replace(self, a=self.a * (maximum_norm / norm))
+
 
 def metric_projector_operator(
     basis: Tensor,

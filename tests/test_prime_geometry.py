@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from heretic_nx.geometry.consensus import grassmann_consensus
+from heretic_nx.geometry.contrastive import fit_contrastive_axis
 from heretic_nx.geometry.fisher import fisher_factor_from_gradients
 from heretic_nx.geometry.leace import fit_leace
 from heretic_nx.geometry.metric import (
@@ -11,6 +12,10 @@ from heretic_nx.geometry.metric import (
     metric_orthonormal_basis,
     metric_residualize,
     require_static_geometry,
+)
+from heretic_nx.geometry.residual import (
+    fit_residual_stream_axes,
+    last_token_residual_stack,
 )
 from heretic_nx.geometry.principal_angles import orthonormal_basis
 from heretic_nx.sketches.crosscov import CrossCovarianceState
@@ -102,3 +107,42 @@ def test_metric_rejects_non_finite_and_mixed_device_inputs() -> None:
         assert "finite" in str(error)
     else:
         raise AssertionError("non-finite metric calibration must fail")
+
+
+def test_contrastive_axis_is_stable_and_safe_mean_orthogonal() -> None:
+    generator = torch.Generator().manual_seed(113)
+    safe_mean = torch.tensor([2.0, 0.0, 0.0, 0.0])
+    target_axis = torch.tensor([0.0, 0.0, 1.0, 0.0])
+    safe = safe_mean + 0.05 * torch.randn(90, 4, generator=generator)
+    target = safe_mean + target_axis + 0.05 * torch.randn(90, 4, generator=generator)
+    evidence = fit_contrastive_axis(safe, target, folds=3)
+    assert float(torch.dot(evidence.axis, target_axis)) > 0.99
+    assert abs(evidence.safe_mean_cosine) < 1e-5
+    assert evidence.fold_cosine_minimum > 0.99
+
+
+def test_last_token_residual_stack_supports_left_and_right_padding() -> None:
+    embedding = torch.arange(2 * 4 * 3, dtype=torch.float32).reshape(2, 4, 3)
+    layer_0 = embedding + 100
+    layer_1 = embedding + 200
+    left_mask = torch.tensor([[0, 0, 1, 1], [0, 1, 1, 1]])
+    right_mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]])
+    left = last_token_residual_stack((embedding, layer_0, layer_1), left_mask)
+    right = last_token_residual_stack((embedding, layer_0, layer_1), right_mask)
+    torch.testing.assert_close(left[:, 0], layer_0[:, 3])
+    torch.testing.assert_close(right[:, 0], torch.stack((layer_0[0, 1], layer_0[1, 2])))
+    assert left.shape == (2, 2, 3)
+
+
+def test_residual_stream_axes_are_layer_aligned() -> None:
+    generator = torch.Generator().manual_seed(127)
+    safe = 0.02 * torch.randn(90, 2, 5, generator=generator)
+    target = safe.clone()
+    target[:, 0, 1] += 1
+    target[:, 1, 3] += 1
+    axes = fit_residual_stream_axes(
+        safe, target, folds=3, remove_safe_mean=False
+    )
+    assert len(axes) == 2
+    assert float(axes[0].axis[1]) > 0.99
+    assert float(axes[1].axis[3]) > 0.99

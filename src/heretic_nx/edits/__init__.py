@@ -9,6 +9,13 @@ from .activation_op import (
 )
 from .affine import AffineActivationOperator, affine_operator_from_leace
 from .matrix_opt import LowRankOptimizationResult, fit_low_rank_matrix_operator
+from .norm_preserving import norm_preserving_weight_edit
+from .residual_stream import (
+    ResidualStreamWeightEditor,
+    apply_residual_stream_weight_edits,
+    build_residual_stream_weight_editors,
+    snapshot_residual_stream_weights,
+)
 from .nx_ir2 import (
     ActivationEditIR,
     NXIR2,
@@ -34,15 +41,20 @@ __all__ = [
     "NXIR3",
     "RoutePolicyIR",
     "RiskProbeIR",
+    "ResidualStreamWeightEditor",
     "SemanticSiteRef",
     "TimePolicyIR",
     "ThinkClosePolicyIR",
     "activation_forward_hook",
+    "apply_residual_stream_weight_edits",
     "affine_operator_from_leace",
     "atomic_unit_scores",
+    "build_residual_stream_weight_editors",
     "metric_projector_operator",
+    "norm_preserving_weight_edit",
     "fit_low_rank_matrix_operator",
     "fit_signed_spectral_operator",
     "select_atomic_units",
+    "snapshot_residual_stream_weights",
     "SignedSpectralEdit",
 ]

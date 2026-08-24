@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Literal
 
 from torch import nn
@@ -40,15 +41,47 @@ class SemanticSiteRegistry:
         return tuple(site for site in self.sites if site.kind == kind)
 
 
+def _nested_attr(root: object, path: str) -> object | None:
+    value: object | None = root
+    for part in path.split("."):
+        value = getattr(value, part, None)
+        if value is None:
+            return None
+    return value
+
+
 def _model_layers(model: nn.Module) -> tuple[str, list[nn.Module]]:
     candidates = (
-        ("model.layers", getattr(getattr(model, "model", None), "layers", None)),
-        ("layers", getattr(model, "layers", None)),
+        "model.layers",
+        "model.decoder.layers",
+        "transformer.h",
+        "gpt_neox.layers",
+        "layers",
     )
-    for prefix, layers in candidates:
+    for prefix in candidates:
+        layers = _nested_attr(model, prefix)
         if layers is not None and isinstance(layers, (nn.ModuleList, list, tuple)):
             return prefix, list(layers)
     raise ValueError("model does not expose a supported decoder-layer collection")
+
+
+def _first_module(root: nn.Module, names: Sequence[str]) -> tuple[str, nn.Module] | None:
+    for name in names:
+        value = getattr(root, name, None)
+        if isinstance(value, nn.Module):
+            return name, value
+    return None
+
+
+def _configured_hidden_size(model: nn.Module) -> int:
+    config = getattr(model, "config", None)
+    text_config = getattr(config, "text_config", None)
+    for source in (config, text_config):
+        for name in ("hidden_size", "d_model", "n_embd"):
+            value = getattr(source, name, None)
+            if value is not None and int(value) > 0:
+                return int(value)
+    return 0
 
 
 def _linear_shape(module: nn.Module) -> tuple[int | None, int | None]:
@@ -106,28 +139,53 @@ def discover_semantic_sites(model: nn.Module) -> SemanticSiteRegistry:
     """Discover LIV/GQA/FFN/block sites from module structure, not path regexes."""
 
     prefix, layers = _model_layers(model)
-    configured_dim = getattr(getattr(model, "config", None), "hidden_size", None)
+    configured_dim = _configured_hidden_size(model)
     sites: list[SemanticSite] = []
     for layer_index, layer in enumerate(layers):
-        feed_forward = getattr(layer, "feed_forward", None)
-        stream_dim = int(configured_dim or 0)
-        if feed_forward is not None and hasattr(feed_forward, "w2"):
-            _ffn_in, ffn_out = _linear_shape(feed_forward.w2)
+        feed_forward_match = _first_module(layer, ("feed_forward", "mlp"))
+        feed_forward_name, feed_forward = (
+            feed_forward_match if feed_forward_match is not None else ("", None)
+        )
+        ffn_output_match = (
+            _first_module(
+                feed_forward,
+                ("w2", "down_proj", "fc2", "dense_4h_to_h"),
+            )
+            if feed_forward is not None
+            else None
+        )
+        stream_dim = configured_dim
+        if ffn_output_match is not None:
+            _ffn_output_name, ffn_output = ffn_output_match
+            _ffn_in, ffn_out = _linear_shape(ffn_output)
             stream_dim = int(ffn_out or stream_dim)
         if stream_dim <= 0:
             raise ValueError(f"cannot infer stream dimension at layer {layer_index}")
 
-        attention = getattr(layer, "self_attn", None)
-        if attention is not None and all(
-            hasattr(attention, name) for name in ("q_proj", "k_proj", "v_proj", "out_proj")
-        ):
+        attention_match = _first_module(layer, ("self_attn", "attention", "attn"))
+        attention_name, attention = (
+            attention_match if attention_match is not None else ("", None)
+        )
+        attention_output_match = (
+            _first_module(attention, ("out_proj", "o_proj", "dense"))
+            if attention is not None
+            else None
+        )
+        has_split_qkv = attention is not None and all(
+            hasattr(attention, name) for name in ("q_proj", "k_proj", "v_proj")
+        )
+        if attention_output_match is not None and has_split_qkv:
+            attention_output_name, attention_output = attention_output_match
             sites.append(
                 _site(
                     layer=layer_index,
                     family="gqa",
                     kind="attention_out",
-                    path=f"{prefix}.{layer_index}.self_attn.out_proj",
-                    module=attention.out_proj,
+                    path=(
+                        f"{prefix}.{layer_index}.{attention_name}."
+                        f"{attention_output_name}"
+                    ),
+                    module=attention_output,
                     stream_dim=stream_dim,
                 )
             )
@@ -147,16 +205,18 @@ def discover_semantic_sites(model: nn.Module) -> SemanticSiteRegistry:
                 )
             )
 
-        if feed_forward is not None and all(
-            hasattr(feed_forward, name) for name in ("w1", "w2", "w3")
-        ):
+        if ffn_output_match is not None:
+            ffn_output_name, ffn_output = ffn_output_match
             sites.append(
                 _site(
                     layer=layer_index,
                     family="ffn",
                     kind="ffn_out",
-                    path=f"{prefix}.{layer_index}.feed_forward.w2",
-                    module=feed_forward.w2,
+                    path=(
+                        f"{prefix}.{layer_index}.{feed_forward_name}."
+                        f"{ffn_output_name}"
+                    ),
+                    module=ffn_output,
                     stream_dim=stream_dim,
                 )
             )

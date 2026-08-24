@@ -7,6 +7,7 @@ from .capability import (
     certify_capability_preservation,
     certify_artifact_set,
     paired_bootstrap_interval,
+    sequence_drift_between_models,
     teacher_forced_sequence_kl,
 )
 from .metrics import BenignMetrics, TaskOutcome, aggregate_benign_metrics
@@ -34,6 +35,7 @@ __all__ = [
     "clopper_pearson_zero_upper",
     "derive_prime_claim",
     "paired_bootstrap_interval",
+    "sequence_drift_between_models",
     "teacher_forced_sequence_kl",
     "write_response_artifact",
 ]

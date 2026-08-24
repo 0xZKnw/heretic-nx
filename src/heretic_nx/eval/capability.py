@@ -128,6 +128,78 @@ def teacher_forced_sequence_kl(
     )
 
 
+@torch.inference_mode()
+def sequence_drift_between_models(
+    baseline,
+    candidate,
+    tokenizer,
+    rendered: Sequence[str],
+    *,
+    batch_size: int = 1,
+    max_length: int = 512,
+) -> SequenceDrift:
+    """Aggregate exact teacher-forced KL for two compatible causal LMs.
+
+    The last non-padding position is excluded because its next token is not
+    present in the teacher-forced input. This remains correct for both left
+    and right padding.
+    """
+
+    prompts = tuple(rendered)
+    if not prompts:
+        raise ValueError("at least one rendered prompt is required")
+    if batch_size < 1 or max_length < 2:
+        raise ValueError("batch_size and max_length must be positive")
+    baseline_device = next(baseline.parameters()).device
+    candidate_device = next(candidate.parameters()).device
+    if baseline_device != candidate_device:
+        raise ValueError("baseline and candidate must be on the same device")
+
+    token_count = 0
+    weighted_kl = 0.0
+    weighted_top_mass = 0.0
+    maximum_sequence_kl = 0.0
+    for start in range(0, len(prompts), batch_size):
+        batch = tokenizer(
+            prompts[start : start + batch_size],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+            return_token_type_ids=False,
+        ).to(baseline_device)
+        mask = batch["attention_mask"].bool()
+        if not bool(mask.any(dim=1).all()):
+            raise ValueError("every prompt must contain at least one token")
+        positions = torch.arange(mask.shape[1], device=mask.device)[None, :]
+        last_positions = positions.masked_fill(~mask, -1).amax(dim=1)
+        rows = torch.arange(mask.shape[0], device=mask.device)
+        mask[rows, last_positions] = False
+        if not bool(mask.any()):
+            raise ValueError("teacher-forced KL requires at least two tokens")
+        baseline_logits = baseline(**batch, use_cache=False).logits.float()
+        candidate_logits = candidate(**batch, use_cache=False).logits.float()
+        drift = teacher_forced_sequence_kl(
+            baseline_logits,
+            candidate_logits,
+            mask,
+        )
+        token_count += drift.token_count
+        weighted_kl += drift.mean_token_kl * drift.token_count
+        weighted_top_mass += drift.mean_topk_mass_coverage * drift.token_count
+        maximum_sequence_kl = max(
+            maximum_sequence_kl,
+            drift.maximum_sequence_kl,
+        )
+
+    return SequenceDrift(
+        token_count=token_count,
+        mean_token_kl=weighted_kl / token_count,
+        maximum_sequence_kl=maximum_sequence_kl,
+        mean_topk_mass_coverage=weighted_top_mass / token_count,
+    )
+
+
 def certify_capability_preservation(
     baseline_slices: Mapping[str, Sequence[float] | Tensor],
     candidate_slices: Mapping[str, Sequence[float] | Tensor],

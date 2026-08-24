@@ -11,6 +11,7 @@ from .attrscan import (
     select_top_k,
 )
 from .hessian import ReducedHessian, estimate_reduced_hessian
+from .layer_kernel import LayerKernel
 from .qcqp import QCQPResult, solve_qcqp
 from .robust import RobustFeasibility, cvar, enforce_scenario_constraints, smooth_max
 
@@ -18,6 +19,7 @@ __all__ = [
     "AttributionScore",
     "QCQPResult",
     "ReducedHessian",
+    "LayerKernel",
     "ReliabilityDiagnostic",
     "RobustFeasibility",
     "SymmetricEstimate",

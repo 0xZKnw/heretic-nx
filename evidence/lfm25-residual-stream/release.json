@@ -1,0 +1,118 @@
+{
+  "schema_version": "heretic-nx-residual-stream-release-v1",
+  "release_name": "LFM2.5-1.2B-Thinking-Heretic-NX-Residual-Stream",
+  "nomenclature": {
+    "engine": "Heretic NX",
+    "algorithm_profile": "Residual-Stream",
+    "validation_protocol": "PRIME"
+  },
+  "source": {
+    "model": "LiquidAI/LFM2.5-1.2B-Thinking",
+    "revision": "f313478934a7612d22991f752959d7a1a8756fec",
+    "model_safetensors_sha256": "112fba7db6c4544d9944002fcfe1c21e23e03d8fc0a0c7e2b6655de6c738583d"
+  },
+  "candidate": {
+    "model_safetensors_sha256": "b4dafb3612c022480f0b35ede751d06d133cba050b6cd4b30d0cb5c283ac104f",
+    "size_bytes": 2340697936,
+    "dtype": "bfloat16",
+    "quantized": false,
+    "selected_scale": 0.78,
+    "active_semantic_sites": 19,
+    "direction_source": "pinned base-model residual hidden states",
+    "comparator_weights_used_to_construct_directions": false,
+    "row_norm_restoration": "exact after FP32 normalized-row projection"
+  },
+  "pinned_heretic_comparator": {
+    "model_safetensors_sha256": "a13f650f2bd47c334c2aacb3047018b05f13485199217435854827acd9a5263d"
+  },
+  "selection_and_holdout": {
+    "original_report_sha256": "90f7d6d8899a1565b9b0f2fa98e896e7470bbc64aa8c9665df009812ec6a94bf",
+    "development_rows": 80,
+    "locked_holdout_rows": 24,
+    "aggregate_refusal_markers": {
+      "heretic": 3,
+      "candidate": 3,
+      "rows": 104
+    },
+    "development_sequence_kl": {
+      "heretic_mean_token_kl": 0.143820918691197,
+      "candidate_mean_token_kl": 0.07011872700815457,
+      "candidate_maximum_sequence_kl": 0.12231390923261642
+    },
+    "locked_holdout_sequence_kl": {
+      "heretic_mean_token_kl": 0.1343150744064786,
+      "heretic_maximum_sequence_kl": 0.1602417230606079,
+      "candidate_mean_token_kl": 0.0643015569525546,
+      "candidate_maximum_sequence_kl": 0.10557907819747925
+    },
+    "passed_local_gate": true
+  },
+  "xstest": {
+    "original_report_sha256": "c992b424490db269775375cdcfdae65877d54eeb476abcf597f6c1cfd33005ea",
+    "dataset": "natolambert/xstest-v2-copy",
+    "revision": "b71afe2a6d10e5a6254ea8bcb006c48b095a15d5",
+    "dataset_sha256": "f02efe45d27e394f2bf78bef73e8125fdc59de79e725cdeb47a4ae9b5824a14e",
+    "counts": {
+      "safe_rows": 250,
+      "unsafe_contrast_rows": 200,
+      "base": {"safe": 15, "unsafe_contrast": 113, "total": 128},
+      "heretic": {"safe": 4, "unsafe_contrast": 11, "total": 15},
+      "candidate": {"safe": 1, "unsafe_contrast": 6, "total": 7}
+    },
+    "metric_kind": "lexical refusal-marker proxy",
+    "passed_against_heretic": true
+  },
+  "paired_capability": {
+    "original_report_sha256": "33a4469e09cecc22476b6b54983b8ef0d690518173a9e7a662a3dce5895524e9",
+    "seed": 1307,
+    "selected_rows_sha256": "82c9880d790d98d94edea74d28c34041c7046dadd25dd84f4ca0ae49ca3f71d5",
+    "row_count": 241,
+    "scoring": "deterministic first-token A/B/C/D",
+    "accuracy": {
+      "base": 0.24066390041493776,
+      "heretic": 0.23651452282157676,
+      "candidate": 0.2572614107883817
+    },
+    "candidate_minus_base": {
+      "mean_difference": 0.016597510373443983,
+      "interval_lower": -0.024896265560165973,
+      "interval_upper": 0.058091286307053944,
+      "noninferiority_margin": 0.03,
+      "noninferiority_passed": true
+    },
+    "candidate_minus_heretic": {
+      "mean_difference": 0.02074688796680498,
+      "interval_lower": -0.02074688796680498,
+      "interval_upper": 0.06224066390041494,
+      "noninferiority_margin": 0.03,
+      "noninferiority_passed": true
+    }
+  },
+  "gguf_bf16": {
+    "sha256": "2f66d67c336898651a7c2e3177b4c397a019b66f3b6f852898cd3adf9de24a07",
+    "size_bytes": 2343329888,
+    "quantized": false,
+    "tensor_count": 148,
+    "converter": "ggml-org/llama.cpp/convert_hf_to_gguf.py",
+    "converter_revision": "c060ca974c773c7c3d17fd1b66dc9d312bc292c0",
+    "lm_studio": {
+      "load_success": true,
+      "loaded_gib": 2.18,
+      "smoke_prompt_final_answer": "437",
+      "expected_final_answer": "437",
+      "eos_found": true,
+      "tokens_per_second": 75.77,
+      "time_to_first_token_seconds": 0.316
+    }
+  },
+  "claim_boundaries": {
+    "external_prime_certification": false,
+    "official_universal_winner": false,
+    "direct_quantized_weight_editing_validated": false,
+    "notes": [
+      "PRIME is the project's internal evidence protocol, not a third-party certification.",
+      "Refusal counts are lexical proxies, not semantic safety or task-success judgments.",
+      "The paired MCQ slice is broader than KL but is not a comprehensive benchmark suite."
+    ]
+  }
+}

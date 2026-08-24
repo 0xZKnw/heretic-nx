@@ -9,6 +9,7 @@ from heretic_nx.optimize.attrscan import (
     select_top_k,
 )
 from heretic_nx.optimize.hessian import estimate_reduced_hessian
+from heretic_nx.optimize.layer_kernel import LayerKernel
 from heretic_nx.optimize.qcqp import solve_qcqp
 from heretic_nx.optimize.robust import cvar, enforce_scenario_constraints, smooth_max
 
@@ -25,6 +26,14 @@ def test_attrscan_matches_central_difference_and_topk() -> None:
     diagnostic = attribution_reliability(3.0, minus, plus, eps)
     assert not diagnostic.flagged
     assert abs(diagnostic.central_difference - 3.0) < 1e-6
+
+
+def test_layer_kernel_is_symmetric_bounded_and_compact() -> None:
+    kernel = LayerKernel(1.5, center=5.5, minimum_strength=0.3, radius=3.5)
+    assert kernel.active_layers(12) == (2, 3, 4, 5, 6, 7, 8, 9)
+    assert kernel.strength(5) == kernel.strength(6)
+    assert 0.3 <= kernel.strength(2) <= 1.5
+    assert kernel.strength(1) == 0
 
 
 def test_attrscan_topk_recall_on_mini_transformer() -> None:

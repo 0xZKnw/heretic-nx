@@ -3,8 +3,9 @@ from __future__ import annotations
 import torch
 
 from heretic_nx.edits.affine import affine_operator_from_leace
-from heretic_nx.edits.activation_op import metric_projector_operator
+from heretic_nx.edits.activation_op import ActivationOperator, metric_projector_operator
 from heretic_nx.edits.matrix_opt import fit_low_rank_matrix_operator
+from heretic_nx.edits.norm_preserving import norm_preserving_weight_edit
 from heretic_nx.edits.nx_ir2 import (
     ActivationEditIR,
     NXIR2,
@@ -34,6 +35,58 @@ def test_activation_metric_operator_matches_dense_formula() -> None:
     dense_column = q @ torch.linalg.solve(gram + 1e-6 * torch.eye(2), q.T @ metric.dense())
     expected = hidden - 0.4 * hidden @ dense_column.T
     torch.testing.assert_close(operator.apply(hidden), expected, atol=2e-5, rtol=2e-5)
+
+
+def test_activation_operator_spectral_bound_matches_dense_map() -> None:
+    generator = torch.Generator().manual_seed(193)
+    operator = metric_projector_operator(
+        torch.randn(9, 2, generator=generator),
+        LowRankMetric.from_factors(
+            9,
+            covariance_factor=torch.randn(9, 4, generator=generator),
+        ),
+        beta=0.7,
+    )
+    dense_norm = float(torch.linalg.matrix_norm(operator.a @ operator.b.T, ord=2))
+    assert abs(operator.spectral_norm() - dense_norm) < 1e-5
+    bounded = operator.bounded(0.8)
+    assert bounded.spectral_norm() <= 0.80001
+    assert bounded.beta == operator.beta
+
+
+def test_norm_preserving_weight_edit_restores_every_output_row() -> None:
+    generator = torch.Generator().manual_seed(197)
+    weight = torch.randn(13, 17, generator=generator)
+    q = orthonormal_basis(torch.randn(13, 2, generator=generator))
+    operator = metric_projector_operator(
+        q,
+        LowRankMetric.from_factors(13, regularization=1.0),
+        beta=1.0,
+    )
+    edited = norm_preserving_weight_edit(weight, operator, strength=1.6)
+    torch.testing.assert_close(
+        torch.linalg.vector_norm(edited, dim=1),
+        torch.linalg.vector_norm(weight, dim=1),
+        atol=2e-6,
+        rtol=2e-6,
+    )
+    assert float(torch.linalg.vector_norm(edited - weight)) > 0
+
+
+def test_norm_preserving_weight_edit_fails_on_collapsed_nonzero_row() -> None:
+    weight = torch.eye(3)
+    direction = torch.tensor([[1.0], [0.0], [0.0]])
+    operator = ActivationOperator(
+        a=direction,
+        b=direction,
+        beta=1.0,
+    )
+    try:
+        norm_preserving_weight_edit(weight, operator, strength=1.0)
+    except RuntimeError as error:
+        assert "collapsed" in str(error)
+    else:
+        raise AssertionError("a collapsed non-zero row must fail closed")
 
 
 def test_input_projector_factorization() -> None:
