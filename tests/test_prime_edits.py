@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import torch
 
+from heretic_nx.edits.affine import affine_operator_from_leace
 from heretic_nx.edits.activation_op import metric_projector_operator
+from heretic_nx.edits.matrix_opt import fit_low_rank_matrix_operator
 from heretic_nx.edits.nx_ir2 import (
     ActivationEditIR,
     NXIR2,
@@ -11,8 +13,10 @@ from heretic_nx.edits.nx_ir2 import (
     ThinkClosePolicyIR,
 )
 from heretic_nx.edits.projector import input_projector_factors
+from heretic_nx.edits.spectral import fit_signed_spectral_operator
 from heretic_nx.edits.sparse import atomic_unit_scores, select_atomic_units
 from heretic_nx.geometry.metric import LowRankMetric
+from heretic_nx.geometry.leace import fit_leace
 from heretic_nx.geometry.principal_angles import orthonormal_basis
 from heretic_nx.runtime.temporal import BoundedPIDController, TemporalGate
 
@@ -139,3 +143,48 @@ def test_nxir2_supports_fail_closed_temporal_only_sidecar(tmp_path) -> None:
     path = tmp_path / "temporal-only.nx-ir2.json"
     document.write(path)
     assert NXIR2.read(path) == document
+
+
+def test_leace_affine_operator_matches_closed_form() -> None:
+    generator = torch.Generator().manual_seed(163)
+    labels = torch.randint(0, 2, (200,), generator=generator)
+    concepts = torch.nn.functional.one_hot(labels, 2).float()
+    values = concepts @ torch.randn(2, 7, generator=generator) + 0.2 * torch.randn(
+        200, 7, generator=generator
+    )
+    eraser = fit_leace(values, concepts)
+    operator = affine_operator_from_leace(eraser)
+    torch.testing.assert_close(operator.apply(values), eraser.apply(values), atol=2e-5, rtol=2e-5)
+
+
+def test_signed_spectral_operator_prefers_target_specific_direction() -> None:
+    target = torch.zeros(6, 2)
+    protected = torch.zeros(6, 2)
+    target[4, 0] = 5.0
+    protected[1, 0] = 5.0
+    edit = fit_signed_spectral_operator(target, protected, rank=1, beta=0.5)
+    assert int(edit.basis[:, 0].abs().argmax()) == 4
+    hidden = torch.eye(6)
+    edited = edit.operator.apply(hidden)
+    assert float(edited[4, 4]) < 1.0
+    torch.testing.assert_close(edited[1, 1], torch.tensor(1.0))
+
+
+def test_low_rank_matrix_optimizer_reduces_target_separation_with_bounded_drift() -> None:
+    generator = torch.Generator().manual_seed(167)
+    protected = 0.2 * torch.randn(80, 8, generator=generator)
+    target = 0.2 * torch.randn(80, 8, generator=generator)
+    target[:, 0] += 2.0
+    result = fit_low_rank_matrix_operator(
+        target,
+        protected,
+        rank=2,
+        beta=0.8,
+        steps=80,
+        seed=167,
+    )
+    assert result.final_loss < result.initial_loss
+    assert result.target_separation_ratio < 0.5
+    assert torch.linalg.matrix_norm(
+        result.operator.a @ result.operator.b.T, ord=2
+    ) <= 1.0001
