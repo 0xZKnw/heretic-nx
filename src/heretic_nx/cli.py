@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import importlib.metadata
 import json
 import platform
@@ -13,6 +14,19 @@ import torch
 
 from . import __version__
 from .runtime.token_budget import OperationBudgetRegistry, cuda_memory_caps
+from .benchmark.closed_track import (
+    ArmObservations,
+    ClosedTrackRegistration,
+    evaluate_closed_track,
+)
+from .hashing import canonical_json
+
+
+def _package_version(name: str) -> str:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "not-installed"
 
 
 def doctor(backend: str) -> dict[str, object]:
@@ -24,7 +38,7 @@ def doctor(backend: str) -> dict[str, object]:
         "requested_backend": backend,
         "cuda_available": torch.cuda.is_available(),
         "libraries": {
-            name: importlib.metadata.version(name)
+            name: _package_version(name)
             for name in ("transformers", "bitsandbytes", "safetensors", "scipy")
         },
         "torch_cuda_runtime": torch.version.cuda,
@@ -54,6 +68,11 @@ def main() -> None:
     doctor_parser = subparsers.add_parser("doctor")
     doctor_parser.add_argument("--backend", default="auto")
     doctor_parser.add_argument("--output", type=Path)
+    benchmark_parser = subparsers.add_parser("benchmark-closed")
+    benchmark_parser.add_argument("--registration", type=Path, required=True)
+    benchmark_parser.add_argument("--observations", type=Path, required=True)
+    benchmark_parser.add_argument("--output", type=Path, required=True)
+    benchmark_parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -63,6 +82,23 @@ def main() -> None:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(rendered + "\n", encoding="utf-8")
         print(rendered)
+    elif args.command == "benchmark-closed":
+        registration = ClosedTrackRegistration.model_validate_json(
+            args.registration.read_bytes()
+        )
+        payload = json.loads(args.observations.read_text(encoding="utf-8"))
+        observations = {
+            arm_id: ArmObservations.model_validate(value)
+            for arm_id, value in payload.items()
+        }
+        result = evaluate_closed_track(registration, observations, seed=args.seed)
+        report = {
+            "schema_version": "closed-track-report-v1",
+            **asdict(result),
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_bytes(canonical_json(report) + b"\n")
+        print(json.dumps(report, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
