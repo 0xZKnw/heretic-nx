@@ -1,7 +1,7 @@
 # HERETIC-NX
 
-HERETIC-NX is 0xZKnw's clean-room research engine for low-memory behavioral
-model editing and directional ablation. Its first target is aggressive
+HERETIC-NX is a clean-room research engine for low-memory behavioral model
+editing and directional ablation. Its first target is aggressive
 false-refusal removal while retaining as much general capability as possible.
 
 **HERETIC-NX** is the project and engine. **PRIME** is its capability-preserving
