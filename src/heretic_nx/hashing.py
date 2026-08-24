@@ -31,3 +31,18 @@ def sha256_file(path: str | Path, chunk_size: int = 8 * 1024 * 1024) -> str:
         for chunk in iter(lambda: stream.read(chunk_size), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_directory(path: str | Path) -> str:
+    """Hash a directory from sorted relative paths and individual file hashes."""
+
+    root = Path(path)
+    if not root.is_dir():
+        raise ValueError(f"not a directory: {root}")
+    entries = [
+        {"path": file.relative_to(root).as_posix(), "sha256": sha256_file(file)}
+        for file in sorted((item for item in root.rglob("*") if item.is_file()), key=lambda item: item.relative_to(root).as_posix())
+    ]
+    if not entries:
+        raise ValueError("cannot hash an empty directory")
+    return sha256_json(entries)
