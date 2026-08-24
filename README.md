@@ -47,6 +47,10 @@ was reloaded for the 450-prompt XSTest comparison. Model weights, residual
 caches and generated artifacts are intentionally not stored in this source
 repository.
 
+The evaluated Transformers checkpoint and the non-quantized BF16 GGUF are
+published together on
+[`LFM2.5-1.2B-Thinking-Heretic-NX-Residual-Stream`](https://huggingface.co/0xzknw/LFM2.5-1.2B-Thinking-Heretic-NX-Residual-Stream).
+
 ## PRIME components
 
 - deterministic input manifests and content hashes;
