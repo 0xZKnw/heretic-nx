@@ -1,0 +1,137 @@
+{
+  "schema_version": "lfm25-heretic-closed-comparison-v2",
+  "date": "2026-08-24",
+  "scope": "model-specific comparison on LiquidAI/LFM2.5-1.2B-Thinking",
+  "base": {
+    "revision": "f313478934a7612d22991f752959d7a1a8756fec",
+    "model_safetensors_sha256": "112fba7db6c4544d9944002fcfe1c21e23e03d8fc0a0c7e2b6655de6c738583d"
+  },
+  "arms": {
+    "heretic_master": {
+      "engine_revision": "bedb94ef117a271532ac2058447fbc165d5051bd",
+      "config_sha256": "9b8d1d79e6187e0b781dfbaf763484004e14efa12a98348072c10833a8b9ad84",
+      "journal_sha256": "ef6a0ce7da010cdde2eccb4e4e3a4f43401ceb4825095503bfdb298a6c942ce2",
+      "model_safetensors_sha256": "0cac04492603fa6c4f3c2e3dd70983521a603a40a3a577ad8617493d2911e3c3",
+      "trials": 60,
+      "startup_trials": 15,
+      "seed": 42,
+      "selected_trial": 23,
+      "internal_refusal_markers": 72,
+      "internal_rows": 100,
+      "internal_first_token_kl": 0.00013164521078579128
+    },
+    "heretic_v1_4": {
+      "engine_revision": "6ea3b8d778d047b4b3b7c5b843e21c5bea98ee8d",
+      "config_sha256": "f474ff58369ecae41fd3849f32d0bbd8b82805216388fdafe6b59a84b1a307b9",
+      "journal_sha256": "470e0627434bd0454130d4c7bef00b6f6850789dafdcda15bf93366c28d14162",
+      "model_safetensors_sha256": "a639a7ae7dffc52d4218daedfd6b2fcf686e86bb91f4fd5f3beeac34f476c8e6",
+      "trials": 60,
+      "startup_trials": 15,
+      "seed": 42,
+      "selected_trial": 57,
+      "internal_refusal_markers": 12,
+      "internal_rows": 100,
+      "internal_first_token_kl": 0.00040590373100712895
+    },
+    "heretic_wide": {
+      "engine_revision": "bedb94ef117a271532ac2058447fbc165d5051bd",
+      "config_sha256": "c89dc40145048d965afab5168d1dbdb6a2903c62fc61ce492f43da3b9b165e66",
+      "adapter_sha256": "aa090bcf88fe8ea1a9839d9e2a9a4d4b0da331ef3da67629e9868546f842ddd9",
+      "journal_sha256": "d7030178608c0007254b8dd6b8f4384883c890104414c13b2c9f6b4cc62fd59c",
+      "model_safetensors_sha256": "a13f650f2bd47c334c2aacb3047018b05f13485199217435854827acd9a5263d",
+      "trials": 60,
+      "startup_trials": 15,
+      "seed": 42,
+      "selected_trial": 23,
+      "internal_refusal_markers": 3,
+      "internal_rows": 100,
+      "internal_first_token_kl": 0.00027520483126863837,
+      "note": "Stronger disclosed comparator with LFM component split, wider strength bound, and seeded start."
+    },
+    "residual_stream": {
+      "engine": "Heretic NX v0.2.0",
+      "algorithm_profile": "Residual-Stream",
+      "model_safetensors_sha256": "b4dafb3612c022480f0b35ede751d06d133cba050b6cd4b30d0cb5c283ac104f",
+      "frozen_before_comparison": true
+    }
+  },
+  "external_evaluation": {
+    "report": "runs/lfm25-closed-track-external/report.json",
+    "report_schema_version": "lfm25-closed-track-external-v2",
+    "report_sha256": "5b28a23e600da5f2b8a0389525ba1deba8b685fe6ae303a3bca86bf4730b7b7a",
+    "familywise_alpha": 0.05,
+    "multiplicity_family_arms": ["heretic_master", "heretic_v1_4", "heretic_wide"],
+    "metrics_per_arm": 3,
+    "per_comparison_metric_alpha": 0.005555555555555556,
+    "paired_bootstrap_resamples": 10000,
+    "xstest": {
+      "revision": "b71afe2a6d10e5a6254ea8bcb006c48b095a15d5",
+      "rows_sha256": "f02efe45d27e394f2bf78bef73e8125fdc59de79e725cdeb47a4ae9b5824a14e",
+      "rows": 450,
+      "safe_rows": 250,
+      "unsafe_rows": 200
+    },
+    "strongreject": {
+      "dataset": "AlignmentResearch/StrongREJECT",
+      "revision": "9f4b3397bda985e1ac6dadb655e9ca3a17974144",
+      "split": "validation",
+      "rows_sha256": "9eba826b84414bc41ab1a0e165ded12f675992b487f9500df79400c42b5d8f1e",
+      "rows": 313,
+      "semantic_judge_used": false
+    },
+    "target_rows": 513,
+    "capability": {
+      "rows_sha256": "3fbb297ade53e1aa09db76f754a9e93f6c26bbcc0dd83053e4a4a7953918cae7",
+      "rows": 854,
+      "tasks": {"arc_challenge": 256, "hellaswag": 256, "mmlu": 342},
+      "noninferiority_margin": 0.03
+    },
+    "results": {
+      "base": {"xstest_refusal_markers": 131, "xstest_safe_refusal_markers": 16, "xstest_unsafe_refusal_markers": 115, "strongreject_refusal_markers": 240, "target_refusal_markers": 355, "capability_accuracy": 0.22950819672131148},
+      "heretic_master": {"xstest_refusal_markers": 50, "xstest_safe_refusal_markers": 4, "xstest_unsafe_refusal_markers": 46, "strongreject_refusal_markers": 114, "target_refusal_markers": 160, "capability_accuracy": 0.2306791569086651},
+      "heretic_v1_4": {"xstest_refusal_markers": 19, "xstest_safe_refusal_markers": 2, "xstest_unsafe_refusal_markers": 17, "strongreject_refusal_markers": 48, "target_refusal_markers": 65, "capability_accuracy": 0.22950819672131148},
+      "heretic_wide": {"xstest_refusal_markers": 12, "xstest_safe_refusal_markers": 2, "xstest_unsafe_refusal_markers": 10, "strongreject_refusal_markers": 14, "target_refusal_markers": 24, "capability_accuracy": 0.22950819672131148},
+      "residual_stream": {"xstest_refusal_markers": 5, "xstest_safe_refusal_markers": 0, "xstest_unsafe_refusal_markers": 5, "strongreject_refusal_markers": 14, "target_refusal_markers": 19, "capability_accuracy": 0.234192037470726}
+    },
+    "corrected_paired_candidate_minus_competitor": {
+      "heretic_master": {
+        "target_mean": 0.27485380116959063,
+        "target_interval": [0.2202729044834308, 0.32987329434697926],
+        "safe_behavior_mean": 0.016,
+        "safe_behavior_interval": [0.0, 0.044],
+        "safe_behavior_noninferiority": true,
+        "capability_mean": 0.00351288056206089,
+        "capability_interval": [-0.0234192037470726, 0.03044496487119438],
+        "capability_noninferiority_3pp": true
+      },
+      "heretic_v1_4": {
+        "target_mean": 0.08966861598440545,
+        "target_interval": [0.05263157894736842, 0.1286549707602339],
+        "safe_behavior_mean": 0.008,
+        "safe_behavior_interval": [0.0, 0.028],
+        "safe_behavior_noninferiority": true,
+        "capability_mean": 0.00468384074941452,
+        "capability_interval": [-0.02224824355971897, 0.03278688524590164],
+        "capability_noninferiority_3pp": true
+      },
+      "heretic_wide": {
+        "target_mean": 0.009746588693957114,
+        "target_interval": [-0.009746588693957114, 0.031189083820662766],
+        "safe_behavior_mean": 0.008,
+        "safe_behavior_interval": [0.0, 0.028],
+        "safe_behavior_noninferiority": true,
+        "capability_mean": 0.00468384074941452,
+        "capability_interval": [-0.02224824355971897, 0.03395784543325527],
+        "capability_noninferiority_3pp": true
+      }
+    }
+  },
+  "claim": {
+    "outperforms_pinned_heretic_master_and_v1_4_runs": true,
+    "basis": "positive multiplicity-corrected paired target lower bounds plus passed safe-behavior and 3pp capability non-inferiority gates",
+    "heretic_wide_result": "lower observed target-refusal count with capability and safe-behavior non-inferiority; corrected target superiority interval crosses zero",
+    "universal_engine_superiority": false,
+    "third_party_certification": false,
+    "metric_warning": "Refusal markers are lexical proxies, not semantic task-success or safety judgments."
+  }
+}

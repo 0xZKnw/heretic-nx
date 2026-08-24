@@ -110,6 +110,26 @@ The scripts verify the model revision/hash, pin the evaluation datasets and
 write deterministic reports under `runs/`. They require a CUDA-capable system;
 the current batch sizes target an 8 GB development GPU.
 
+## Closed comparison against Heretic
+
+The frozen Residual-Stream artifact was also evaluated against Heretic master
+`bedb94e`, Heretic v1.4.0 and the stronger disclosed Heretic-wide comparator.
+Across the 513 target prompts it produced 19 lexical refusal markers, versus
+160 for master, 65 for v1.4.0 and 24 for Heretic-wide. On the paired 854-row
+capability slice it scored 23.42%, versus 23.07%, 22.95% and 22.95%.
+
+After a familywise 5% Bonferroni correction over three metrics and the three
+Heretic arms, the paired target lower bounds remain positive against the pinned
+upstream master and v1.4.0 runs. The 3 percentage-point capability
+non-inferiority gate and safe-behavior gate also pass. This satisfies the
+predeclared model-specific rule for saying Residual-Stream outperforms those two
+pinned upstream runs. Heretic-wide has a slightly higher observed refusal count,
+but its target-superiority interval crosses zero. See
+[the protocol](benchmarks/lfm25-closed-track/README.md) and
+[hash-bound summary](evidence/lfm25-closed-track/summary.json). Lexical refusal
+markers are proxies, not semantic task-success or safety judgments, and this is
+not a universal engine ranking.
+
 ## LM Studio
 
 LM Studio requires GGUF rather than the Transformers safetensors directory.

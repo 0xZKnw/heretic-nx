@@ -2,6 +2,22 @@
 
 All notable public changes to Heretic NX are documented here.
 
+## Unreleased
+
+### Added
+
+- Reproducible Heretic master and v1.4.0 closed-comparison configurations.
+- One-command paired external evaluator retaining item-level XSTest,
+  StrongREJECT-proxy and capability observations.
+- Hash-bound evidence showing corrected target superiority with capability and
+  safe-behavior non-inferiority against the pinned upstream runs.
+
+### Clarified
+
+- The stronger Heretic-wide arm has a higher observed target-refusal count than
+  Residual-Stream, but the paired target-superiority interval still crosses zero.
+- The comparison is model-specific and does not claim universal engine superiority or third-party certification.
+
 ## 0.2.0 — 2026-08-24
 
 ### Added
