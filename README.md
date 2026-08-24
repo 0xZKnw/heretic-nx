@@ -1,5 +1,8 @@
 # HERETIC-NX
 
+[![CI](https://github.com/0xZKnw/heretic-nx/actions/workflows/ci.yml/badge.svg)](https://github.com/0xZKnw/heretic-nx/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB.svg)](https://www.python.org/)
+
 HERETIC-NX is a research engine for low-memory behavioral model editing and
 directional ablation. Its first target is aggressive
 false-refusal removal while retaining as much general capability as possible.
@@ -69,6 +72,7 @@ published together on
 See [`PRIME_AUDIT.md`](PRIME_AUDIT.md) for the implementation matrix.
 The research and validation design is documented in
 [`PRIME_RESEARCH.md`](PRIME_RESEARCH.md).
+Release history is recorded in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Installation
 

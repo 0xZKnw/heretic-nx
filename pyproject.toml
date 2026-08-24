@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "heretic-nx"
-version = "0.1.0"
+version = "0.2.0"
 description = "Clean-room, low-memory behavioral model editing research engine"
 readme = "README.md"
 requires-python = ">=3.11"
