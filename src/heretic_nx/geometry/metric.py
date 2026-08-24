@@ -23,6 +23,10 @@ class LowRankMetric:
     def apply(self, value: Tensor) -> Tensor:
         if value.shape[0] != self.dimension:
             raise ValueError("metric and value dimensions differ")
+        if value.device != self.diagonal.device:
+            raise ValueError("metric and value must be on the same device")
+        if not torch.isfinite(value).all():
+            raise ValueError("metric values must be finite")
         result = self.diagonal * value if value.ndim == 1 else self.diagonal[:, None] * value
         if self.factors.shape[1]:
             result = result + self.factors @ (self.factors.T @ value)
@@ -49,20 +53,44 @@ class LowRankMetric:
     ) -> "LowRankMetric":
         if regularization <= 0:
             raise ValueError("regularization must be positive")
+        if covariance_weight < 0 or fisher_weight < 0:
+            raise ValueError("metric weights must be non-negative")
+        devices = {
+            factor.device
+            for factor in (covariance_factor, fisher_factor)
+            if factor is not None
+        }
+        if len(devices) > 1:
+            raise ValueError("metric factors must be on the same device")
+        device = next(iter(devices), torch.device("cpu"))
         pieces = []
         for factor, weight in (
             (covariance_factor, covariance_weight),
             (fisher_factor, fisher_weight),
         ):
-            if factor is None or factor.shape[1] == 0 or weight == 0:
+            if factor is None or weight == 0:
                 continue
-            value = factor.to(dtype=dtype)
+            if factor.ndim != 2:
+                raise ValueError("metric factors must be rank-2 matrices")
+            if factor.shape[1] == 0:
+                continue
+            value = factor.to(device=device, dtype=dtype)
             if value.shape[0] != dimension:
                 raise ValueError("metric factor has the wrong ambient dimension")
+            if not torch.isfinite(value).all():
+                raise ValueError("metric factors must be finite")
             trace = value.square().sum().clamp_min(torch.finfo(dtype).eps)
-            pieces.append(value * torch.sqrt(torch.tensor(weight * dimension, dtype=dtype) / trace))
-        joined = torch.cat(pieces, dim=1) if pieces else torch.empty(dimension, 0, dtype=dtype)
-        return cls(torch.full((dimension,), regularization, dtype=dtype), joined)
+            scale = torch.as_tensor(weight * dimension, dtype=dtype, device=device).sqrt()
+            pieces.append(value * scale / trace.sqrt())
+        joined = (
+            torch.cat(pieces, dim=1)
+            if pieces
+            else torch.empty(dimension, 0, dtype=dtype, device=device)
+        )
+        return cls(
+            torch.full((dimension,), regularization, dtype=dtype, device=device),
+            joined,
+        )
 
     @classmethod
     def from_samples(
@@ -76,6 +104,8 @@ class LowRankMetric:
     ) -> "LowRankMetric":
         if activations.ndim != 2 or activations.shape[0] < 2:
             raise ValueError("at least two activation rows are required")
+        if not torch.isfinite(activations).all():
+            raise ValueError("activations must be finite")
         centered = activations.float() - activations.float().mean(dim=0)
         covariance_factor = centered.T / (activations.shape[0] - 1) ** 0.5
         return cls.from_factors(
@@ -154,6 +184,8 @@ class MetricGeometryGate:
         protected: Tensor,
         metric: LowRankMetric,
     ) -> MetricGateResult:
+        if not torch.isfinite(target).all() or not torch.isfinite(protected).all():
+            raise ValueError("geometry inputs must be finite")
         target_basis = metric_orthonormal_basis(target, metric)
         if target_basis.shape[1] == 0:
             return MetricGateResult("reject-site", 90.0, 0.0, target_basis)
@@ -176,3 +208,16 @@ class MetricGeometryGate:
         else:
             decision = "conditional-only"
         return MetricGateResult(decision, minimum_angle, retained, editable)
+
+
+def require_static_geometry(result: MetricGateResult, *, site_id: str = "unknown") -> Tensor:
+    """Return an editable basis only when the static geometry gate passed."""
+
+    if result.decision != "safe-static":
+        raise RuntimeError(
+            f"site {site_id} is not eligible for a static edit: {result.decision} "
+            f"(angle={result.minimum_angle_deg:.6g}, retained={result.retained_energy:.6g})"
+        )
+    if result.editable_basis.shape[1] == 0 or not torch.isfinite(result.editable_basis).all():
+        raise RuntimeError(f"site {site_id} has no finite editable static basis")
+    return result.editable_basis

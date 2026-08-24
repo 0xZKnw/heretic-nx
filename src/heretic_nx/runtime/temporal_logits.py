@@ -64,6 +64,10 @@ class TemporalThinkController:
     def __call__(self, input_ids: Tensor, scores: Tensor) -> Tensor:
         if input_ids.ndim != 2 or scores.ndim != 2 or input_ids.shape[0] != scores.shape[0]:
             raise ValueError("input_ids and scores must be aligned rank-2 tensors")
+        if input_ids.device != scores.device:
+            raise ValueError("input_ids and scores must be on the same device")
+        if self.close_token_id >= scores.shape[1]:
+            raise ValueError("close_token_id is outside the score vocabulary")
         generated_tokens = max(input_ids.shape[1] - self.prompt_length, 0)
         if not self.enabled or generated_tokens < self.budget_tokens:
             self.last_decision = TemporalCloseDecision((), generated_tokens, False)

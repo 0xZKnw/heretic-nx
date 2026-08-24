@@ -303,7 +303,7 @@ def main() -> None:
     save_file({f"{key}.t_inst": value.to(torch.bfloat16) for key, value in states.items()}, RUN_DIR / "activations.safetensors")
 
     train = split_indices(rows, "train-geometry")
-    calibration = split_indices(rows, "search-public")
+    calibration = split_indices(rows, "validation-search")
     secret = split_indices(rows, "secret-b")
     candidates = []
     fitted: dict[str, LatentSafetyRouter] = {}

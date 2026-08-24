@@ -10,6 +10,7 @@ from heretic_nx.geometry.metric import (
     MetricGeometryGate,
     metric_orthonormal_basis,
     metric_residualize,
+    require_static_geometry,
 )
 from heretic_nx.geometry.principal_angles import orthonormal_basis
 from heretic_nx.sketches.crosscov import CrossCovarianceState
@@ -79,3 +80,25 @@ def test_leace_removes_linear_cross_covariance() -> None:
     cross = (erased - erased.mean(0)).T @ (concepts - concepts.mean(0)) / values.shape[0]
     assert float(cross.norm()) < 2e-4
     assert eraser.concept_rank == 2
+
+
+def test_rejected_metric_geometry_cannot_be_used_for_static_edit() -> None:
+    metric = LowRankMetric.from_factors(6)
+    protected = torch.eye(6)[:, :2]
+    result = MetricGeometryGate().evaluate(protected[:, :1], protected, metric)
+    assert result.decision == "reject-site"
+    try:
+        require_static_geometry(result, site_id="L0:block")
+    except RuntimeError as error:
+        assert "not eligible" in str(error)
+    else:
+        raise AssertionError("a rejected gate must never yield a static editor")
+
+
+def test_metric_rejects_non_finite_and_mixed_device_inputs() -> None:
+    try:
+        LowRankMetric.from_samples(torch.tensor([[0.0, 1.0], [float("nan"), 2.0]]))
+    except ValueError as error:
+        assert "finite" in str(error)
+    else:
+        raise AssertionError("non-finite metric calibration must fail")

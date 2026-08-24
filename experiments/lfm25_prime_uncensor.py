@@ -20,7 +20,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from heretic_nx.edits.activation_op import ActivationOperator, metric_projector_operator
 from heretic_nx.geometry.consensus import grassmann_consensus
-from heretic_nx.geometry.metric import LowRankMetric, MetricGeometryGate
+from heretic_nx.geometry.metric import LowRankMetric, MetricGeometryGate, require_static_geometry
 from heretic_nx.hashing import canonical_json, sha256_file, sha256_json
 from heretic_nx.model import assert_lfm25_layout, discover_semantic_sites
 
@@ -181,13 +181,14 @@ def build_editors(
             regularization=1e-3,
         )
         geometry = gate.evaluate(consensus.basis, capability, metric)
-        editable = geometry.editable_basis
-        if editable.shape[1] == 0 or geometry.retained_energy < 1e-6:
+        if geometry.decision != "safe-static":
             print(
-                f"  {site.id}: skip geometry rank={editable.shape[1]} retained={geometry.retained_energy:.3g}",
+                f"  {site.id}: skip static gate={geometry.decision} "
+                f"angle={geometry.minimum_angle_deg:.3g} retained={geometry.retained_energy:.3g}",
                 flush=True,
             )
             continue
+        editable = require_static_geometry(geometry, site_id=site.id)
         operator = metric_projector_operator(editable, metric, beta=1.0)
         a, b = operator.a.cpu(), operator.b.cpu()
         safe_delta = (safe_values @ b) @ a.T

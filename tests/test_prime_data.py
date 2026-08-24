@@ -5,7 +5,12 @@ import torch
 from heretic_nx.data.boundary_mining import delta_debug_benign_refusal
 from heretic_nx.data.oracles import OracleVerdict, benign_consensus
 from heretic_nx.data.pairs import BenignPromptPair, paired_differences
-from heretic_nx.data.splits import SplitAssignment, assign_split, validate_no_leakage
+from heretic_nx.data.splits import (
+    SplitAssignment,
+    assert_phase_allowed,
+    assign_split,
+    validate_no_leakage,
+)
 
 
 def test_benign_pair_requires_multiple_confident_oracles() -> None:
@@ -46,3 +51,32 @@ def test_split_assignment_is_deterministic_and_leakage_fails() -> None:
         pass
     else:
         raise AssertionError("cross-split duplication must fail")
+
+
+def test_semantic_groups_are_atomic_and_phase_access_is_fail_closed() -> None:
+    first = assign_split("surface-a", group_id="meaning-1", seed=17)
+    second = assign_split("surface-b", group_id="meaning-1", seed=17)
+    assert first.split == second.split
+    assert first.assignment_hash == second.assignment_hash
+    try:
+        validate_no_leakage(
+            [
+                SplitAssignment("a", "train-geometry", "1", "same-meaning"),
+                SplitAssignment("b", "public-test", "2", "same-meaning"),
+            ]
+        )
+    except ValueError as error:
+        assert "semantic group" in str(error)
+    else:
+        raise AssertionError("semantic variants must not cross partitions")
+    validation = [SplitAssignment("v", "validation-search", "3", "v")]
+    assert_phase_allowed(validation, "selection")
+    try:
+        assert_phase_allowed(
+            [SplitAssignment("p", "public-test", "4", "p")],
+            "selection",
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("selection must not inspect a public test item")

@@ -63,19 +63,23 @@ def sequential_decision(
     bad_rate_interval: ConfidenceInterval | None = None,
     bad_rate_maximum: float | None = None,
 ) -> SequentialDecision:
+    risk_certified = True
     if bad_rate_interval is not None and bad_rate_maximum is not None:
         if bad_rate_interval.lower > bad_rate_maximum:
             return SequentialDecision("constraint-violation", "bad-rate lower bound exceeds limit")
+        risk_certified = bad_rate_interval.upper <= bad_rate_maximum
     if incumbent is None:
         return SequentialDecision("continue", "no incumbent bound")
     if higher_is_better:
         if candidate.upper < incumbent.lower + minimum_margin:
             return SequentialDecision("prune", "candidate is anytime-dominated")
-        if candidate.lower > incumbent.upper + minimum_margin:
+        if candidate.lower > incumbent.upper + minimum_margin and risk_certified:
             return SequentialDecision("promote", "candidate is anytime-superior")
     else:
         if candidate.lower > incumbent.upper - minimum_margin:
             return SequentialDecision("prune", "candidate is anytime-dominated")
-        if candidate.upper < incumbent.lower - minimum_margin:
+        if candidate.upper < incumbent.lower - minimum_margin and risk_certified:
             return SequentialDecision("promote", "candidate is anytime-superior")
+    if not risk_certified:
+        return SequentialDecision("continue", "risk upper bound is not yet below the limit")
     return SequentialDecision("continue", "confidence sequences overlap")

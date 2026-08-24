@@ -142,3 +142,51 @@ def test_robust_objectives_and_hard_constraints() -> None:
     )
     assert not result.feasible
     assert result.violating_scenarios == (1,)
+
+
+def test_reduced_hessian_supports_low_probe_screening_and_rejects_nan() -> None:
+    diagonal = torch.arange(1, 9, dtype=torch.float32)
+
+    def gradient(beta: torch.Tensor) -> torch.Tensor:
+        return diagonal * beta
+
+    estimate = estimate_reduced_hessian(gradient, 8, probes=4, seed=151)
+    assert estimate.dense_estimate.shape == (8, 8)
+    assert torch.isfinite(estimate.dense_estimate).all()
+    try:
+        estimate_reduced_hessian(
+            lambda beta: torch.full_like(beta, float("nan")),
+            3,
+            probes=2,
+        )
+    except ValueError as error:
+        assert "non-finite" in str(error)
+    else:
+        raise AssertionError("non-finite HVPs must fail closed")
+
+
+def test_qcqp_rejects_indefinite_metrics_and_zeroes_failed_solves() -> None:
+    try:
+        solve_qcqp(
+            torch.ones(2),
+            torch.diag(torch.tensor([1.0, -1.0])),
+            torch.eye(2),
+            torch.eye(2),
+            capability_budget=1.0,
+            risk_budget=1.0,
+        )
+    except ValueError as error:
+        assert "positive semidefinite" in str(error)
+    else:
+        raise AssertionError("an indefinite convex QCQP must be rejected")
+    failed = solve_qcqp(
+        torch.ones(3),
+        torch.eye(3),
+        torch.eye(3),
+        torch.eye(3),
+        capability_budget=0.01,
+        risk_budget=0.01,
+        max_iterations=1,
+    )
+    assert not failed.success
+    torch.testing.assert_close(failed.beta, torch.zeros(3))

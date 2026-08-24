@@ -27,6 +27,7 @@ from .metric import (
     metric_orthonormal_basis,
     metric_principal_angles_deg,
     metric_residualize,
+    require_static_geometry,
 )
 from .token_positions import (
     PromptTokenPositions,
@@ -51,4 +52,5 @@ __all__ = [
     "metric_orthonormal_basis",
     "metric_principal_angles_deg",
     "metric_residualize",
+    "require_static_geometry",
 ]

@@ -23,6 +23,7 @@ class FrequentDirections:
         self.dtype = dtype
         self._rows = torch.empty((0, dimension), device=self.device, dtype=dtype)
         self.samples_seen = 0
+        self.mean = torch.zeros(dimension, device=self.device, dtype=dtype)
 
     @property
     def rows(self) -> Tensor:
@@ -33,16 +34,51 @@ class FrequentDirections:
             device=self.device,
             dtype=self.dtype,
         )
-        self.samples_seen += batch.shape[0]
-        self._rows = torch.cat((self._rows, batch), dim=0)
+        if batch.shape[0] == 0:
+            return
+        if not torch.isfinite(batch).all():
+            raise ValueError("sketch values must be finite")
+        batch_count = batch.shape[0]
+        batch_mean = batch.mean(dim=0)
+        centered = batch - batch_mean
+        if self.samples_seen:
+            correction = (self.mean - batch_mean) * (
+                self.samples_seen * batch_count / (self.samples_seen + batch_count)
+            ) ** 0.5
+            centered = torch.cat((centered, correction[None, :]), dim=0)
+        total = self.samples_seen + batch_count
+        self.mean = self.mean + (batch_mean - self.mean) * (batch_count / total)
+        self.samples_seen = total
+        self._append(centered)
+
+    def _append(self, rows: Tensor) -> None:
+        self._rows = torch.cat((self._rows, rows), dim=0)
         if self._rows.shape[0] >= 2 * self.rank:
             self._rows = self._compress(self._rows, shrink=True)
 
     def merge(self, other: "FrequentDirections") -> None:
         if (self.rank, self.dimension) != (other.rank, other.dimension):
             raise ValueError("Cannot merge sketches with different shapes")
-        self.update(other.rows)
-        self.samples_seen += other.samples_seen - other.rows.shape[0]
+        if other.samples_seen == 0:
+            return
+        if self.samples_seen == 0:
+            self._rows = other.rows.to(device=self.device, dtype=self.dtype)
+            self.mean = other.mean.to(device=self.device, dtype=self.dtype).clone()
+            self.samples_seen = other.samples_seen
+            return
+        other_mean = other.mean.to(device=self.device, dtype=self.dtype)
+        total = self.samples_seen + other.samples_seen
+        correction = (self.mean - other_mean) * (
+            self.samples_seen * other.samples_seen / total
+        ) ** 0.5
+        self._append(
+            torch.cat(
+                (other.rows.to(device=self.device, dtype=self.dtype), correction[None, :]),
+                dim=0,
+            )
+        )
+        self.mean = self.mean + (other_mean - self.mean) * (other.samples_seen / total)
+        self.samples_seen = total
 
     def covariance_approx(self) -> Tensor:
         rows = self.rows

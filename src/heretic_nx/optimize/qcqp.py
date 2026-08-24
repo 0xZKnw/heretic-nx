@@ -25,6 +25,19 @@ def _symmetric(value: Tensor) -> Tensor:
     return (value.float() + value.float().T) / 2
 
 
+def _validated_psd(value: Tensor, name: str, tolerance: float) -> Tensor:
+    matrix = _symmetric(value)
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError(f"{name} must be a square matrix")
+    if not torch.isfinite(matrix).all():
+        raise ValueError(f"{name} must contain only finite values")
+    eigenvalues, eigenvectors = torch.linalg.eigh(matrix)
+    scale = float(eigenvalues.abs().max().clamp_min(1.0).item())
+    if float(eigenvalues.min().item()) < -tolerance * scale:
+        raise ValueError(f"{name} must be positive semidefinite")
+    return (eigenvectors * eigenvalues.clamp_min(0)) @ eigenvectors.T
+
+
 def solve_qcqp(
     gain: Tensor,
     benign_hessian: Tensor,
@@ -40,17 +53,21 @@ def solve_qcqp(
     """Solve a convex reduced QCQP with explicit H/C ellipsoidal constraints."""
 
     g = gain.detach().float().cpu()
-    h = _symmetric(benign_hessian).cpu()
-    fc = _symmetric(capability_metric).cpu()
-    fh = _symmetric(risk_metric).cpu()
+    if tolerance <= 0:
+        raise ValueError("tolerance must be positive")
+    h = _validated_psd(benign_hessian, "benign_hessian", tolerance).cpu()
+    fc = _validated_psd(capability_metric, "capability_metric", tolerance).cpu()
+    fh = _validated_psd(risk_metric, "risk_metric", tolerance).cpu()
     dimension = g.numel()
     if g.ndim != 1 or any(matrix.shape != (dimension, dimension) for matrix in (h, fc, fh)):
         raise ValueError("QCQP tensors have incompatible shapes")
     if capability_budget < 0 or risk_budget < 0:
         raise ValueError("budgets must be non-negative")
+    if not torch.isfinite(g).all():
+        raise ValueError("gain must contain only finite values")
     maximum = torch.as_tensor(beta_max, dtype=torch.float32).expand(dimension).cpu()
-    if torch.any(maximum <= 0):
-        raise ValueError("beta_max must be positive")
+    if torch.any(maximum <= 0) or not torch.isfinite(maximum).all():
+        raise ValueError("beta_max must be finite and positive")
 
     h_np, fc_np, fh_np, g_np = (item.numpy().astype(np.float64) for item in (h, fc, fh, g))
 
@@ -99,12 +116,17 @@ def solve_qcqp(
         and risk_cost <= risk_budget + 10 * tolerance
         and bool(torch.all(beta.abs() <= maximum + 10 * tolerance))
     )
+    success = bool(result.success and feasible and np.isfinite(result.fun))
+    if not success:
+        beta.zero_()
+        capability_cost = 0.0
+        risk_cost = 0.0
     return QCQPResult(
         beta=beta,
         objective=float(0.5 * beta @ h @ beta - g @ beta),
         capability_cost=capability_cost,
         risk_cost=risk_cost,
-        success=bool(result.success and feasible),
-        message=str(result.message),
+        success=success,
+        message=str(result.message) if success else f"fail-closed: {result.message}",
         iterations=int(result.nit),
     )

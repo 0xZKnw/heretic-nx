@@ -58,6 +58,10 @@ class LatentSafetyRouter:
             raise ValueError("safe_task_labels length must match safe states")
         if not 0 < unsafe_recall <= 1:
             raise ValueError("unsafe_recall must be in (0, 1]")
+        if safe.device != unsafe.device:
+            raise ValueError("safe and unsafe states must be on the same device")
+        if not torch.isfinite(safe).all() or not torch.isfinite(unsafe).all():
+            raise ValueError("router calibration states must be finite")
 
         all_states = torch.cat((safe, unsafe), dim=0)
         center = all_states.mean(dim=0)
@@ -102,13 +106,24 @@ class LatentSafetyRouter:
         )
 
     def harmfulness_scores(self, instruction_states: Tensor) -> Tensor:
-        states = instruction_states.float()
+        states = instruction_states.to(device=self.center.device, dtype=self.center.dtype)
+        if not torch.isfinite(states).all():
+            raise ValueError("instruction states must be finite")
         return ((states - self.center) / self.scale) @ self.harmfulness_axis
 
     def decide(self, instruction_state: Tensor) -> RouteDecision:
         if instruction_state.ndim != 1:
             raise ValueError("instruction_state must be one-dimensional")
-        standardized = (instruction_state.float() - self.center) / self.scale
+        state = instruction_state.to(device=self.center.device, dtype=self.center.dtype)
+        if not torch.isfinite(state).all():
+            return RouteDecision(
+                "abstain-harmfulness",
+                None,
+                float("nan"),
+                self.harmfulness_threshold,
+                None,
+            )
+        standardized = (state - self.center) / self.scale
         score = float((standardized @ self.harmfulness_axis).item())
         if score >= self.harmfulness_threshold:
             return RouteDecision(

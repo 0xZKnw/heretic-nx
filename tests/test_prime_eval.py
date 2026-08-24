@@ -5,6 +5,7 @@ import random
 from heretic_nx.eval.cache import JudgeCache, judge_cache_key
 from heretic_nx.eval.cascade import JudgeCascade, JudgeVerdict, surface_verdict
 from heretic_nx.eval.metrics import TaskOutcome, aggregate_benign_metrics
+from heretic_nx.eval.promotion import GateEvidence, derive_prime_claim
 from heretic_nx.eval.sequential import (
     AnytimeBernoulliCS,
     ConfidenceInterval,
@@ -71,6 +72,25 @@ def test_anytime_cs_monte_carlo_coverage_and_decisions() -> None:
     assert sequential_decision(candidate, incumbent=incumbent).action == "promote"
 
 
+def test_sequential_promotion_requires_risk_ucb_certification() -> None:
+    candidate = ConfidenceInterval(0.7, 0.8, 100, 0.75)
+    incumbent = ConfidenceInterval(0.4, 0.5, 100, 0.45)
+    uncertain_risk = ConfidenceInterval(0.0, 0.08, 100, 0.01)
+    certified_risk = ConfidenceInterval(0.0, 0.02, 400, 0.01)
+    assert sequential_decision(
+        candidate,
+        incumbent=incumbent,
+        bad_rate_interval=uncertain_risk,
+        bad_rate_maximum=0.05,
+    ).action == "continue"
+    assert sequential_decision(
+        candidate,
+        incumbent=incumbent,
+        bad_rate_interval=certified_risk,
+        bad_rate_maximum=0.05,
+    ).action == "promote"
+
+
 def test_operation_budgets_are_independent() -> None:
     registry = OperationBudgetRegistry.defaults()
     before = registry["generate"].batch_controller.batch_size
@@ -80,3 +100,17 @@ def test_operation_budgets_are_independent() -> None:
     soft, hard = cuda_memory_caps(8 * 1024**3)
     assert soft == int(6.24 * 1024**3) or soft == int(6.25 * 1024**3)
     assert hard == int(7.2 * 1024**3)
+
+
+def test_prime_claims_are_derived_from_contiguous_hashed_evidence() -> None:
+    passed = lambda gate: GateEvidence(gate, "pass", "a" * 64, "registered gate passed")
+    core = {gate: passed(gate) for gate in ("geometry", "causal", "behavior")}
+    assert derive_prime_claim(core).claim == "PRIME-candidate"
+    validated = {**core, "capability": passed("capability"), "provenance": passed("provenance")}
+    result = derive_prime_claim(validated)
+    assert result.claim == "PRIME-validated"
+    assert not result.external_accreditation
+    skipped = {**validated, "benchmark": passed("benchmark")}
+    assert derive_prime_claim(skipped).claim == "PRIME-validated"
+    failed = {**core, "geometry": GateEvidence("geometry", "fail", None, "angle too small")}
+    assert derive_prime_claim(failed).claim == "ineligible"

@@ -93,3 +93,33 @@ def test_rank_allocator_obeys_budget_and_prefixes() -> None:
         budget=4.0,
     )
     assert result == {"a": 1, "b": 1}
+
+
+def test_rank_allocator_finds_global_prefix_optimum() -> None:
+    result = allocate_rank(
+        {"unlock": [1.0, 100.0], "greedy-trap": [10.0]},
+        {"unlock": [4.0, 1.0], "greedy-trap": [5.0]},
+        budget=5.0,
+    )
+    assert result == {"greedy-trap": 0, "unlock": 2}
+
+
+def test_frequent_directions_is_centered_translation_invariant_and_mergeable() -> None:
+    generator = torch.Generator().manual_seed(157)
+    values = torch.randn(300, 10, generator=generator)
+    shifted = values + torch.arange(10) * 100.0
+    original = FrequentDirections(rank=6, dimension=10)
+    translated = FrequentDirections(rank=6, dimension=10)
+    left = FrequentDirections(rank=6, dimension=10)
+    right = FrequentDirections(rank=6, dimension=10)
+    original.update(values)
+    translated.update(shifted)
+    left.update(values[:137])
+    right.update(values[137:])
+    left.merge(right)
+    original_basis = original.basis(4)
+    translated_basis = translated.basis(4)
+    merged_basis = left.basis(3)
+    assert float(torch.linalg.svdvals(original_basis.T @ translated_basis).min()) > 0.999
+    assert float(torch.linalg.svdvals(original_basis.T @ merged_basis).min()) > 0.98
+    torch.testing.assert_close(translated.mean, shifted.mean(0), atol=1e-4, rtol=1e-5)
