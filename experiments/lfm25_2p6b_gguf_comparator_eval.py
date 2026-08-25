@@ -10,8 +10,6 @@ import json
 from pathlib import Path
 import time
 from typing import Any, Callable
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
 from datasets import load_dataset
 from transformers import AutoTokenizer
@@ -34,6 +32,11 @@ from experiments.lfm25_closed_track_eval import expanded_capability_rows
 from experiments.lfm25_residual_stream_capability import LETTERS, task_scores
 from experiments.lfm25_xstest_retest import XSTEST_ID, XSTEST_REVISION
 from heretic_nx.eval.capability import paired_bootstrap_interval
+from heretic_nx.eval.gguf_runtime import (
+    RESTRICTED_GRAMMAR,
+    lm_studio_completion,
+    native_restricted_choice,
+)
 from heretic_nx.hashing import (
     canonical_json,
     sha256_file,
@@ -55,7 +58,6 @@ PINNED_ARTIFACT_SHA256 = (
     "027f0a8308879a21163dd0c981b7397d1b8828dc06ce01e72250d3adf2f87f9b"
 )
 BATCH_SIZE = 32
-RESTRICTED_GRAMMAR = "root ::= [ABCD]"
 LLAMA_CPP_RUNTIME = "LM Studio llama.cpp CUDA12 AVX2 2.30.0"
 LLAMA_CPP_BUILD = "0.1.2-dev commit 947fd9b"
 
@@ -64,67 +66,6 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_bytes(canonical_json(value) + b"\n")
     temporary.replace(path)
-
-
-def completion(
-    endpoint: str,
-    model: str,
-    prompt: str,
-    *,
-    max_tokens: int,
-) -> str:
-    payload: dict[str, Any] = {
-        "model": model,
-        "prompt": prompt,
-        "max_tokens": max_tokens,
-        "temperature": 0,
-        "stream": False,
-    }
-    request = Request(
-        endpoint.rstrip("/") + "/v1/completions",
-        data=canonical_json(payload),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    last_error: Exception | None = None
-    for attempt in range(3):
-        try:
-            with urlopen(request, timeout=300) as response:
-                result = json.loads(response.read())
-            return str(result["choices"][0]["text"])
-        except (TimeoutError, URLError) as error:
-            last_error = error
-            if attempt < 2:
-                time.sleep(attempt + 1)
-    raise RuntimeError("LM Studio completion failed after three attempts") from last_error
-
-
-def native_restricted_choice(endpoint: str, prompt_tokens: list[int]) -> str:
-    """Return the raw-logit argmax after masking generation to A/B/C/D."""
-    payload = {
-        "prompt": prompt_tokens,
-        "n_predict": 1,
-        "temperature": -1,
-        "grammar": RESTRICTED_GRAMMAR,
-        "stream": False,
-    }
-    request = Request(
-        endpoint.rstrip("/") + "/completion",
-        data=canonical_json(payload),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    last_error: Exception | None = None
-    for attempt in range(3):
-        try:
-            with urlopen(request, timeout=300) as response:
-                result = json.loads(response.read())
-            return str(result["content"])
-        except (TimeoutError, URLError) as error:
-            last_error = error
-            if attempt < 2:
-                time.sleep(attempt + 1)
-    raise RuntimeError("llama.cpp native completion failed after three attempts") from last_error
 
 
 def resume_map(
@@ -231,7 +172,7 @@ def run_xstest(args: argparse.Namespace, artifact_hash: str) -> None:
     }
     responses, seconds = resume_map(
         prompts=rendered,
-        worker=lambda prompt: completion(
+        worker=lambda prompt: lm_studio_completion(
             args.endpoint,
             args.model,
             prompt,

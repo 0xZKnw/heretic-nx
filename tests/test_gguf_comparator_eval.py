@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from types import SimpleNamespace
 
-from experiments import lfm25_2p6b_gguf_comparator_eval as comparator
+from heretic_nx.eval import gguf_runtime
 
 
 class _Response:
@@ -26,8 +24,8 @@ def test_native_restricted_choice_uses_token_ids_and_grammar(monkeypatch) -> Non
         captured["timeout"] = timeout
         return _Response()
 
-    monkeypatch.setattr(comparator, "urlopen", fake_urlopen)
-    choice = comparator.native_restricted_choice(
+    monkeypatch.setattr(gguf_runtime, "urlopen", fake_urlopen)
+    choice = gguf_runtime.native_restricted_choice(
         "http://127.0.0.1:1235",
         [124894, 124899, 41],
     )
@@ -45,25 +43,33 @@ def test_native_restricted_choice_uses_token_ids_and_grammar(monkeypatch) -> Non
     }
 
 
-def test_common_evidence_only_labels_lm_studio_generation_route_when_used() -> None:
-    args = SimpleNamespace(
-        artifact=Path("comparator.gguf"),
-        model="abiray-heretic",
-        endpoint="http://127.0.0.1:1234",
+def test_lm_studio_completion_uses_deterministic_generation(monkeypatch) -> None:
+    captured = {}
+
+    class CompletionResponse(_Response):
+        def read(self) -> bytes:
+            return b'{"choices":[{"text":"answer"}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return CompletionResponse()
+
+    monkeypatch.setattr(gguf_runtime, "urlopen", fake_urlopen)
+    result = gguf_runtime.lm_studio_completion(
+        "http://127.0.0.1:1234",
+        "abiray-heretic",
+        "rendered prompt",
+        max_tokens=96,
     )
 
-    native = comparator.common_evidence(
-        args,
-        "abc123",
-        include_lm_studio=False,
-    )
-    generation = comparator.common_evidence(
-        args,
-        "abc123",
-        include_lm_studio=True,
-    )
-
-    assert "endpoint" not in native
-    assert "lm_studio_model_identifier" not in native
-    assert generation["endpoint"] == "http://127.0.0.1:1234"
-    assert generation["lm_studio_model_identifier"] == "abiray-heretic"
+    payload = json.loads(captured["request"].data)
+    assert result == "answer"
+    assert captured["request"].full_url.endswith("/v1/completions")
+    assert payload == {
+        "max_tokens": 96,
+        "model": "abiray-heretic",
+        "prompt": "rendered prompt",
+        "stream": False,
+        "temperature": 0,
+    }
