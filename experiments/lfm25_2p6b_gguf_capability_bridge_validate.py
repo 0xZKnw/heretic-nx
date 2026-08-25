@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the LM Studio restricted-choice bridge on the PRIME BF16 GGUF."""
+"""Validate llama.cpp restricted-choice scoring on a pinned PRIME GGUF."""
 
 from __future__ import annotations
 
@@ -44,19 +44,30 @@ def main() -> None:
     parser.add_argument("--parallel", type=int, default=8)
     parser.add_argument("--artifact", type=Path, default=DEFAULT_ARTIFACT)
     parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN_DIR)
+    parser.add_argument(
+        "--expected-sha256",
+        default=PINNED_ARTIFACT_SHA256,
+    )
+    parser.add_argument("--format-label", default="GGUF BF16")
+    parser.add_argument("--quantized", action="store_true")
+    parser.add_argument("--partial-name", default="prime-native-tokens.partial.json")
+    parser.add_argument("--report-name", default="prime-native-validation.json")
     args = parser.parse_args()
     args.artifact = args.artifact.resolve()
     args.run_dir = args.run_dir.resolve()
     args.run_dir.mkdir(parents=True, exist_ok=True)
     if args.parallel <= 0:
         raise ValueError("parallel must be positive")
+    for name in (args.partial_name, args.report_name):
+        if Path(name).name != name or not name.endswith(".json"):
+            raise ValueError(f"report names must be local JSON filenames: {name}")
     if not args.artifact.is_file():
         raise RuntimeError(f"missing PRIME GGUF artifact: {args.artifact}")
     artifact_hash = sha256_file(args.artifact)
-    if artifact_hash != PINNED_ARTIFACT_SHA256:
+    if artifact_hash != args.expected_sha256:
         raise RuntimeError(
             f"PRIME GGUF hash mismatch: {artifact_hash} != "
-            f"{PINNED_ARTIFACT_SHA256}"
+            f"{args.expected_sha256}"
         )
 
     rows = expanded_capability_rows()
@@ -87,6 +98,7 @@ def main() -> None:
         "max_new_tokens": 1,
         "close_think": True,
         "temperature": -1,
+        "runtime_build": LLAMA_CPP_BUILD,
     }
     raw_choices, seconds = resume_map(
         prompts=prompt_tokens,
@@ -94,7 +106,7 @@ def main() -> None:
             args.endpoint,
             tokens,
         ),
-        partial_path=args.run_dir / "prime-native-tokens.partial.json",
+        partial_path=args.run_dir / args.partial_name,
         expected=expected,
         parallel=args.parallel,
         encode=str,
@@ -137,7 +149,8 @@ def main() -> None:
         "artifact": {
             "filename": args.artifact.name,
             "sha256": artifact_hash,
-            "format": "GGUF BF16",
+            "format": args.format_label,
+            "quantized": args.quantized,
         },
         "runtime": {
             "engine": "llama.cpp",
@@ -185,7 +198,7 @@ def main() -> None:
             "It does not imply bit-identical kernels or runtimes."
         ),
     }
-    write_json(args.run_dir / "prime-native-validation.json", report)
+    write_json(args.run_dir / args.report_name, report)
     print(json.dumps(report, indent=2), flush=True)
 
 

@@ -42,38 +42,40 @@
     "matched_local_protocol": {
       "rows": 104,
       "max_new_tokens": 96,
-      "temperature": 0,
+      "temperature": -1,
       "close_think": true,
-      "refusal_markers": 5,
-      "refusals_per_100": 4.8076923076923075,
-      "report_sha256": "b52cad554a79afcbe571e1dc70c8310062a62381a6d51fe31bc3a9cc9e19a641"
+      "bos_policy": "pre-tokenized prompt with exactly one explicit BOS",
+      "refusal_markers": 4,
+      "refusals_per_100": 3.8461538461538463,
+      "report_sha256": "1673a7ff3119a64d576c0a1fb714e335e766f74d9d79add1d3e30e77b838648a"
     },
     "matched_xstest": {
       "rows": 450,
-      "refusal_markers": 18,
+      "refusal_markers": 8,
       "safe_rows": 250,
       "safe_refusal_markers": 2,
       "unsafe_contrast_rows": 200,
-      "unsafe_refusal_markers": 16,
-      "report_sha256": "07d5225553b2e0f072f23411c85773bcc203839771b85f8b2a60a6a490c21bc6"
+      "unsafe_refusal_markers": 6,
+      "runtime": "official llama.cpp b10621 CUDA 12.4 x64, native /completion, one explicit BOS",
+      "report_sha256": "9a1ac60a4d73a2516b2f7ba9e17bb3ba2149828f775034bd6e1cf25ee80b9a28"
     },
     "matched_capability": {
       "rows": 854,
       "scoring": "llama.cpp grammar-restricted first-token A/B/C/D raw-logit argmax",
-      "comparator_q8_accuracy": 0.6135831381733021,
+      "comparator_q8_accuracy": 0.6065573770491803,
       "candidate_native_bf16_accuracy": 0.6124121779859485,
       "candidate_gguf_bf16_accuracy": 0.6147540983606558,
-      "candidate_native_minus_comparator": -0.00117096018735363,
-      "interval_lower": -0.02224824355971897,
-      "interval_upper": 0.02107728337236534,
+      "candidate_native_minus_comparator": 0.00585480093676815,
+      "interval_lower": -0.01522248243559719,
+      "interval_upper": 0.02810304449648712,
       "equivalence_passed": true,
       "candidate_gguf_prediction_agreement_with_native": 0.9789227166276346,
       "candidate_gguf_minus_native_accuracy": 0.0023419203747072626,
-      "comparator_report_sha256": "fa42c04984964091c90767716c6329b21d284d332d920c08c8d031f9577af980",
+      "comparator_report_sha256": "9c03ff08cfb5e06079c25ed46e7a0355aec3546cb8080ce126ba0debc5a374d7",
       "runtime_validation_report_sha256": "53ba03110f99cb2718d52b36628c6beb3b691fbef78e45f7aaf94f50b6a2ab42"
     },
     "published_card_kl": 0.0142,
-    "claim_boundary": "The 5/104 refusal, 450-row XSTest and 854-row capability results were reproduced locally on the pinned Q8 artifact. The comparator card's KL value is quoted as published and was not independently reproduced because its full KL protocol and artifact provenance are not disclosed."
+    "claim_boundary": "The 4/104 refusal, 450-row XSTest and 854-row capability results were reproduced locally on the pinned Q8 artifact. The comparator card's KL value is quoted as published and was not independently reproduced because its full KL protocol and artifact provenance are not disclosed."
   },
   "xstest": {
     "dataset": "natolambert/xstest-v2-copy",
@@ -87,9 +89,9 @@
     "unsafe_contrast_rows": 200,
     "base_unsafe_refusal_markers": 128,
     "candidate_unsafe_refusal_markers": 14,
-    "comparator_refusal_markers": 18,
+    "comparator_refusal_markers": 8,
     "comparator_safe_refusal_markers": 2,
-    "comparator_unsafe_refusal_markers": 16,
+    "comparator_unsafe_refusal_markers": 6,
     "target_superiority_passed": true,
     "safe_behavior_noninferiority_passed": true,
     "report_sha256": "6639d908f2188a85fe86fb380cdbf656bc53c14c295db274d742e853dc9ebed4"
@@ -99,16 +101,16 @@
     "scoring": "deterministic first-token A/B/C/D",
     "base_accuracy": 0.617096018735363,
     "candidate_accuracy": 0.6124121779859485,
-    "comparator_q8_accuracy": 0.6135831381733021,
+    "comparator_q8_accuracy": 0.6065573770491803,
     "candidate_minus_base": -0.00468384074941452,
     "interval_lower": -0.01756440281030445,
     "interval_upper": 0.00819672131147541,
     "noninferiority_margin": 0.03,
     "noninferiority_passed": true,
     "equivalence_passed": true,
-    "candidate_minus_comparator": -0.00117096018735363,
-    "candidate_minus_comparator_interval_lower": -0.02224824355971897,
-    "candidate_minus_comparator_interval_upper": 0.02107728337236534,
+    "candidate_minus_comparator": 0.00585480093676815,
+    "candidate_minus_comparator_interval_lower": -0.01522248243559719,
+    "candidate_minus_comparator_interval_upper": 0.02810304449648712,
     "candidate_comparator_equivalence_passed": true,
     "report_sha256": "62cbbb94d131ecfb7f1103c9d71eab838b29d3934b5579415ccaf998eca0ffd4"
   },
@@ -132,8 +134,76 @@
       "time_to_first_token_seconds": 0.131
     }
   },
+  "gguf_q8_0": {
+    "filename": "LFM2.5-2.6B-Heretic-NX-PRIME-Q8_0.gguf",
+    "sha256": "fc038207dc27fa279291c08a0228b4a37f2c38137e530a8a5802804bc1a6c1b7",
+    "size_bytes": 2874779104,
+    "quantized": true,
+    "source_bf16_gguf_sha256": "83b7312291673ba9da17cf3022f7021dc9a7cffb4c5427cbeed81f8ee070eb77",
+    "quantization": "Q8_0",
+    "quantizer": "ggml-org/llama.cpp/llama-quantize",
+    "quantizer_build": "b10621",
+    "quantizer_revision": "c1d0e7a00",
+    "capability_accuracy": 0.6065573770491803,
+    "native_bf16_accuracy": 0.6124121779859485,
+    "bf16_gguf_accuracy": 0.6147540983606558,
+    "q8_minus_native_accuracy": -0.005854800936768156,
+    "q8_minus_bf16_gguf_accuracy": -0.00819672131147553,
+    "prediction_agreement_with_native": 0.9637002341920374,
+    "capability_report_sha256": "e3e694f745d98c693b120a7468313737ca92924058b8eab0cf2a05d8131ee3c8",
+    "official_b10621_q8_comparison": {
+      "comparator_accuracy": 0.6065573770491803,
+      "prime_accuracy": 0.6065573770491803,
+      "prime_minus_comparator": 0.0,
+      "interval_lower": -0.01873536299765808,
+      "interval_upper": 0.01756440281030445,
+      "equivalence_passed": true,
+      "prediction_agreement": 0.914519906323185,
+      "correctness_agreement": 0.9297423887587822,
+      "comparator_report_sha256": "9c03ff08cfb5e06079c25ed46e7a0355aec3546cb8080ce126ba0debc5a374d7"
+    },
+    "lm_studio_runtime_control": {
+      "rows": 450,
+      "refusal_markers": 10,
+      "safe_refusal_markers": 5,
+      "unsafe_refusal_markers": 5,
+      "bf16_gguf_refusal_markers": 12,
+      "bf16_gguf_safe_refusal_markers": 5,
+      "bf16_gguf_unsafe_refusal_markers": 7,
+      "report_sha256": "9b57a214d7431ccdd86a85c96465c449ad5570c78199236b7d221d9531748f77",
+      "bf16_control_report_sha256": "337d2107adcfa51b27a8e707d3b38e598fdb6b0b8d54978cbaba03c23b59aa84"
+    },
+    "official_b10621_xstest": {
+      "rows": 450,
+      "refusal_markers": 9,
+      "safe_refusal_markers": 3,
+      "unsafe_refusal_markers": 6,
+      "comparator_refusal_markers": 8,
+      "comparator_safe_refusal_markers": 2,
+      "comparator_unsafe_refusal_markers": 6,
+      "runtime": "official llama.cpp b10621 CUDA 12.4 x64, native /completion, one explicit BOS",
+      "report_sha256": "280ff3ee798d53c3c0f18e550c987e08fc5d52d12bfc5c681e52b8779c8d4768"
+    },
+    "official_b10621_harmful": {
+      "rows": 104,
+      "refusal_markers": 9,
+      "refusals_per_100": 8.653846153846153,
+      "comparator_refusal_markers": 4,
+      "report_sha256": "b48f751e7b03463fe3a5d8ff08cdacc7f362ed0e73cb2d5b5502ec6ae35a9c3e"
+    },
+    "lm_studio": {
+      "import_success": true,
+      "load_success": true,
+      "identifier": "lfm2.5-2.6b-heretic-nx-prime-q8",
+      "context_length": 4096,
+      "gpu_offload_requested": "max",
+      "smoke_expected_answer": "391",
+      "smoke_final_answer": "391",
+      "finish_reason": "stop"
+    }
+  },
   "validation": {
-    "tests_passed": 84,
+    "tests_passed": 85,
     "tests_failed": 0,
     "smoke_report_sha256": "df6bc37a675a73c385a9fde54e598e6bb15843f0830f56353e504c6beccfbc5c"
   },
@@ -143,8 +213,10 @@
     "direct_quantized_weight_editing_validated": false,
     "notes": [
       "PRIME is the project's internal evidence protocol, not a third-party certification.",
-      "The candidate has one additional lexical refusal marker on the matched 104-row comparison, while its measured first-token KL is lower than the comparator card's published KL figure.",
-      "On matched independent checks, the candidate has two fewer XSTest lexical markers than the Q8 comparator and equivalent paired MCQ capability within the predeclared 3-point margin.",
+      "The native BF16 candidate has 6/104 lexical refusal markers and the released Q8 has 9/104, versus 4/104 for the pinned comparator; the candidate's measured native-BF16 first-token KL is lower than the comparator card's published KL figure.",
+      "On the symmetric official b10621 Q8 XSTest check, PRIME has 9/450 markers versus 8/450 for the comparator and ties the comparator at 6/200 unsafe-contrast markers.",
+      "On the symmetric official b10621 paired capability check, both Q8 artifacts score 60.66%; the PRIME-minus-comparator interval is [-1.87, +1.76] percentage points and equivalence passes.",
+      "The Q8_0 release artifact was quantized after the BF16 edit; direct editing of quantized weights remains unvalidated.",
       "Refusal-marker counts are lexical proxies, not semantic task-success or safety judgments.",
       "The capability slice and XSTest are independent promotion gates but are not a comprehensive benchmark suite."
     ]

@@ -72,3 +72,35 @@ def native_restricted_choice(endpoint: str, prompt_tokens: list[int]) -> str:
             if attempt < 2:
                 time.sleep(attempt + 1)
     raise RuntimeError("llama.cpp native completion failed after three attempts") from last_error
+
+
+def native_completion(
+    endpoint: str,
+    prompt_tokens: list[int],
+    *,
+    max_tokens: int,
+) -> str:
+    """Generate greedily from an exact, pre-tokenized llama.cpp prompt."""
+    payload = {
+        "prompt": prompt_tokens,
+        "n_predict": max_tokens,
+        "temperature": -1,
+        "stream": False,
+    }
+    request = Request(
+        endpoint.rstrip("/") + "/completion",
+        data=canonical_json(payload),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=300) as response:
+                result = json.loads(response.read())
+            return str(result["content"])
+        except (TimeoutError, URLError) as error:
+            last_error = error
+            if attempt < 2:
+                time.sleep(attempt + 1)
+    raise RuntimeError("llama.cpp native generation failed after three attempts") from last_error

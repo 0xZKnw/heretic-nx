@@ -73,3 +73,33 @@ def test_lm_studio_completion_uses_deterministic_generation(monkeypatch) -> None
         "stream": False,
         "temperature": 0,
     }
+
+
+def test_native_completion_uses_exact_tokens_and_greedy_decoding(monkeypatch) -> None:
+    captured = {}
+
+    class NativeResponse(_Response):
+        def read(self) -> bytes:
+            return b'{"content":"generated"}'
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return NativeResponse()
+
+    monkeypatch.setattr(gguf_runtime, "urlopen", fake_urlopen)
+    result = gguf_runtime.native_completion(
+        "http://127.0.0.1:1235",
+        [124894, 124899],
+        max_tokens=96,
+    )
+
+    payload = json.loads(captured["request"].data)
+    assert result == "generated"
+    assert captured["request"].full_url.endswith("/completion")
+    assert payload == {
+        "n_predict": 96,
+        "prompt": [124894, 124899],
+        "stream": False,
+        "temperature": -1,
+    }

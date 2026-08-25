@@ -53,3 +53,4 @@ runs/lfm25-2p6b-eval/
 runs/lfm25-2p6b-heretic-delta-audit/
 runs/lfm25-2p6b-eval-prime-v8/*.partial.json
 runs/lfm25-2p6b-gguf-comparator/*.partial.json
+runs/lfm25-2p6b-prime-q8/*.partial.json

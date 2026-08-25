@@ -14,6 +14,9 @@ All notable public changes to Heretic NX are documented here.
   Heretic Q8 comparator.
 - Pinned Q8 GGUF XSTest and 854-row capability reports, plus a cross-runtime
   validation showing the PRIME BF16 GGUF within 0.23 point of native scoring.
+- A 2.87 GB Q8_0 PRIME release artifact with 60.66% MCQ, 96.37% native
+  prediction agreement and both LM Studio and official llama.cpp b10621
+  runtime reports.
 - Reproducible Heretic master and v1.4.0 closed-comparison configurations.
 - One-command paired external evaluator retaining item-level XSTest,
   StrongREJECT-proxy and capability observations.
@@ -22,13 +25,15 @@ All notable public changes to Heretic NX are documented here.
 
 ### Clarified
 
-- The 2.6B PRIME release records 6/104 lexical refusal markers versus 5/104 for
-  the locally tested Heretic Q8 comparator. Its measured first-token KL is
+- Under the corrected single-BOS b10621 protocol, the 2.6B native PRIME release
+  records 6/104 lexical refusal markers and its Q8 records 9/104, versus 4/104
+  for the locally tested Heretic Q8 comparator. Its measured first-token KL is
   `0.012396`, below the comparator card's published `0.0142`, but that KL
   comparison remains descriptive because the comparator protocol is incomplete.
-- On independent matched checks, PRIME records 16/450 XSTest markers versus
-  18/450 for the Q8 comparator; paired capability is equivalent at 61.24%
-  native BF16 versus 61.36% Q8 GGUF.
+- On the symmetric official b10621 Q8 check, PRIME records 9/450 XSTest markers
+  versus 8/450 for the comparator and ties its 6/200 unsafe-contrast count.
+  The two Q8 capability arms tie at 60.66%, with a paired equivalence interval
+  of `[-1.87, +1.76]` points; PRIME native BF16 records 61.24%.
 - The stronger Heretic-wide arm has a higher observed target-refusal count than
   Residual-Stream, but the paired target-superiority interval still crosses zero.
 - The comparison is model-specific and does not claim universal engine superiority or third-party certification.

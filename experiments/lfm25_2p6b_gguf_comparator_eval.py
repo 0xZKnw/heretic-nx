@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Matched LM Studio evaluation for the pinned LFM2.5-2.6B Heretic Q8."""
+"""Matched llama.cpp evaluation for the pinned LFM2.5-2.6B Heretic Q8."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from experiments.lfm25_xstest_retest import XSTEST_ID, XSTEST_REVISION
 from heretic_nx.eval.capability import paired_bootstrap_interval
 from heretic_nx.eval.gguf_runtime import (
     RESTRICTED_GRAMMAR,
-    lm_studio_completion,
+    native_completion,
     native_restricted_choice,
 )
 from heretic_nx.hashing import (
@@ -58,8 +58,8 @@ PINNED_ARTIFACT_SHA256 = (
     "027f0a8308879a21163dd0c981b7397d1b8828dc06ce01e72250d3adf2f87f9b"
 )
 BATCH_SIZE = 32
-LLAMA_CPP_RUNTIME = "LM Studio llama.cpp CUDA12 AVX2 2.30.0"
-LLAMA_CPP_BUILD = "0.1.2-dev commit 947fd9b"
+LLAMA_CPP_RUNTIME = "official llama.cpp Windows CUDA 12.4 x64"
+LLAMA_CPP_BUILD = "0.3.0-dev build 10621 commit c1d0e7a00"
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
@@ -162,23 +162,28 @@ def run_xstest(args: argparse.Namespace, artifact_hash: str) -> None:
         [str(row["prompt"]) for row in rows],
         close_think=True,
     )
+    prompt_tokens = [
+        tokenizer.encode(value, add_special_tokens=False) for value in rendered
+    ]
+    prompt_tokens_hash = sha256_json(prompt_tokens)
     expected = {
-        "schema_version": "lfm25-2p6b-gguf-xstest-partial-v1",
+        "schema_version": "lfm25-2p6b-gguf-xstest-native-partial-v1",
         "artifact_sha256": artifact_hash,
         "rows_sha256": rows_hash,
+        "prompt_tokens_sha256": prompt_tokens_hash,
         "max_new_tokens": MAX_NEW_TOKENS,
         "close_think": True,
-        "temperature": 0,
+        "temperature": -1,
+        "runtime_build": LLAMA_CPP_BUILD,
     }
     responses, seconds = resume_map(
-        prompts=rendered,
-        worker=lambda prompt: lm_studio_completion(
-            args.endpoint,
-            args.model,
-            prompt,
+        prompts=prompt_tokens,
+        worker=lambda tokens: native_completion(
+            args.native_endpoint,
+            tokens,
             max_tokens=MAX_NEW_TOKENS,
         ),
-        partial_path=args.run_dir / "xstest.partial.json",
+        partial_path=args.run_dir / "xstest-native.partial.json",
         expected=expected,
         parallel=args.parallel,
         encode=str,
@@ -190,12 +195,19 @@ def run_xstest(args: argparse.Namespace, artifact_hash: str) -> None:
     safe_hits = [hit for hit, is_unsafe in zip(hits, unsafe) if not is_unsafe]
     unsafe_hits = [hit for hit, is_unsafe in zip(hits, unsafe) if is_unsafe]
     report = {
-        "schema_version": "lfm25-2p6b-gguf-xstest-v1",
+        "schema_version": "lfm25-2p6b-gguf-xstest-native-v1",
         "comparator": common_evidence(
             args,
             artifact_hash,
-            include_lm_studio=True,
+            include_lm_studio=False,
         ),
+        "runtime": {
+            "engine": "llama.cpp",
+            "distribution": LLAMA_CPP_RUNTIME,
+            "build": LLAMA_CPP_BUILD,
+            "endpoint": args.native_endpoint,
+            "api": "native /completion",
+        },
         "dataset": {
             "id": XSTEST_ID,
             "revision": XSTEST_REVISION,
@@ -204,7 +216,8 @@ def run_xstest(args: argparse.Namespace, artifact_hash: str) -> None:
         "protocol": {
             "close_think": True,
             "max_new_tokens": MAX_NEW_TOKENS,
-            "temperature": 0,
+            "temperature": -1,
+            "prompt_tokens_sha256": prompt_tokens_hash,
             "refusal_markers": REFUSAL_MARKERS,
             "metric": "lexical refusal-marker proxy",
         },
@@ -259,6 +272,7 @@ def run_capability(args: argparse.Namespace, artifact_hash: str) -> None:
         "max_new_tokens": 1,
         "close_think": True,
         "temperature": -1,
+        "runtime_build": LLAMA_CPP_BUILD,
     }
     raw_choices, seconds = resume_map(
         prompts=prompt_tokens,
