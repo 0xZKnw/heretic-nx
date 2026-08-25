@@ -37,3 +37,18 @@ experiments/lfm25_prime_v3_build.py
 runs/lfm25-vnext-*/
 runs/lfm25-heretic-gap-audit/
 runs/lfm25-prime-v3-build/
+
+# LFM2.5-2.6B local search checkpoints and superseded raw reports. Compact
+# release evidence plus the final independent gates remain versioned.
+runs/lfm25-2p6b-residual-stream/
+runs/lfm25-2p6b-residual-stream-prime/
+runs/lfm25-2p6b-residual-stream-prime-v2/
+runs/lfm25-2p6b-residual-stream-prime-v3/
+runs/lfm25-2p6b-residual-stream-prime-v4/
+runs/lfm25-2p6b-residual-stream-prime-v5/
+runs/lfm25-2p6b-residual-stream-prime-v6/
+runs/lfm25-2p6b-residual-stream-prime-v7/
+runs/lfm25-2p6b-residual-stream-prime-v8/
+runs/lfm25-2p6b-eval/
+runs/lfm25-2p6b-heretic-delta-audit/
+runs/lfm25-2p6b-eval-prime-v8/*.partial.json

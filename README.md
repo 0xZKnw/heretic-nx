@@ -20,7 +20,44 @@ separate implementation around deterministic manifests, streaming statistics,
 low-rank geometry and reproducible evaluation. Comparative reports explicitly
 pin the external checkpoint used as the Heretic baseline.
 
-## Current LFM2.5 result
+## LFM2.5 2.6B — Heretic NX PRIME
+
+The current 2.6B release was regenerated from the pinned official
+`LiquidAI/LFM2.5-2.6B` BF16 checkpoint at revision
+`654f9463ce32b05d0429d76fe1f580b27d4c1ac0`. It combines the
+Residual-Stream profile with a capability-protected rank-1 repair axis and an
+eight-site sparse intervention. Comparator weights were not used to construct
+the edit.
+
+| Evaluation | Base | Heretic Q8 comparator | Heretic NX PRIME |
+| --- | ---: | ---: | ---: |
+| Matched harmful rows | — | **5 / 104** | 6 / 104 |
+| First-token KL to official base | 0 | published as 0.0142 | **0.012396** |
+| XSTest marker total | 149 / 450 | — | **16 / 450** |
+| XSTest safe marker count | 21 / 250 | — | **2 / 250** |
+| Paired MCQ capability slice | 61.71% | — | 61.24% |
+
+The refusal comparison is intentionally reported without spin: on the matched
+104-row lexical protocol, the locally tested
+[`Abiray/LFM2.5-2.6B-Heretic-Abliterated-GGUF`](https://huggingface.co/Abiray/LFM2.5-2.6B-Heretic-Abliterated-GGUF)
+Q8 artifact has one fewer marker. Heretic NX PRIME preserves the stronger drift
+result: its measured first-token KL is `0.012396`, below the comparator card's
+published `0.0142`. The KL comparison is descriptive rather than formally
+matched because the comparator card does not disclose enough protocol and
+artifact provenance to reproduce that value independently.
+
+All 104 harmful rows participated in frontier selection. Promotion therefore
+depends on independent gates: the 450-row XSTest target and safe-behavior tests
+pass, while the 854-row ARC-Challenge/HellaSwag/MMLU first-token slice passes
+the predeclared 3-point capability non-inferiority margin. The full suite now
+contains 82 passing tests.
+
+The native BF16 checkpoint and non-quantized BF16 GGUF are published at
+[`LFM2.5-2.6B-Heretic-NX-PRIME`](https://huggingface.co/0xzknw/LFM2.5-2.6B-Heretic-NX-PRIME).
+Hashes, dataset revisions, independent gates and claim boundaries are recorded
+in [`evidence/lfm25-2p6b-prime/release.json`](evidence/lfm25-2p6b-prime/release.json).
+
+## LFM2.5 1.2B Thinking result
 
 The Residual-Stream candidate was regenerated from the pinned official
 `LiquidAI/LFM2.5-1.2B-Thinking` checkpoint at revision
@@ -109,6 +146,25 @@ python experiments/lfm25_residual_stream_capability.py
 The scripts verify the model revision/hash, pin the evaluation datasets and
 write deterministic reports under `runs/`. They require a CUDA-capable system;
 the current batch sizes target an 8 GB development GPU.
+
+The 2.6B Residual-Stream PRIME research path uses the same low-memory design
+and adds capability-protected residual axes plus iterative repair. Its staged
+scripts retain hash checks for their pinned parent artifacts; they document the
+actual search history rather than pretending the final checkpoint came from a
+single post-hoc command. The frozen result can be independently reevaluated
+with:
+
+```powershell
+python -m experiments.lfm25_2p6b_eval capability `
+  --candidate path\to\LFM2.5-2.6B-Heretic-NX-PRIME `
+  --run-dir runs\lfm25-2p6b-eval-prime
+python -m experiments.lfm25_2p6b_eval xstest `
+  --candidate path\to\LFM2.5-2.6B-Heretic-NX-PRIME `
+  --run-dir runs\lfm25-2p6b-eval-prime
+```
+
+The internal `v8` suffix identifies the frozen search build. The public model
+name deliberately omits it: **LFM2.5-2.6B-Heretic-NX-PRIME**.
 
 ## Closed comparison against Heretic
 

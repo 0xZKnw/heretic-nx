@@ -92,6 +92,8 @@ def collect_activations(
     prompts: list[str],
     sites: list[Any],
     label: str,
+    *,
+    batch_size: int = COLLECT_BATCH,
 ) -> dict[str, torch.Tensor]:
     storage: dict[str, list[torch.Tensor]] = {site.id: [] for site in sites}
     armed = {"value": False}
@@ -108,9 +110,9 @@ def collect_activations(
         handles.append(module.register_forward_hook(capture))
     rendered = render(tokenizer, prompts, prefix=False)
     try:
-        for start in range(0, len(rendered), COLLECT_BATCH):
+        for start in range(0, len(rendered), batch_size):
             batch = tokenizer(
-                rendered[start : start + COLLECT_BATCH],
+                rendered[start : start + batch_size],
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
@@ -120,7 +122,7 @@ def collect_activations(
             armed["value"] = True
             model.model(**batch, use_cache=False)
             armed["value"] = False
-            print(f"  {label}: {min(start + COLLECT_BATCH, len(rendered))}/{len(rendered)}", flush=True)
+            print(f"  {label}: {min(start + batch_size, len(rendered))}/{len(rendered)}", flush=True)
     finally:
         armed["value"] = False
         for handle in handles:
@@ -254,12 +256,16 @@ def apply_candidate(
 
 @torch.inference_mode()
 def next_token_log_probs(
-    model: Any, tokenizer: Any, rendered: list[str]
+    model: Any,
+    tokenizer: Any,
+    rendered: list[str],
+    *,
+    batch_size: int = EVAL_BATCH,
 ) -> list[torch.Tensor]:
     rows = []
-    for start in range(0, len(rendered), EVAL_BATCH):
+    for start in range(0, len(rendered), batch_size):
         batch = tokenizer(
-            rendered[start : start + EVAL_BATCH],
+            rendered[start : start + batch_size],
             return_tensors="pt",
             padding=True,
             return_token_type_ids=False,
@@ -270,18 +276,25 @@ def next_token_log_probs(
 
 
 @torch.inference_mode()
-def refusal_count(model: Any, tokenizer: Any, rendered: list[str]) -> int:
+def refusal_count(
+    model: Any,
+    tokenizer: Any,
+    rendered: list[str],
+    *,
+    batch_size: int = EVAL_BATCH,
+    max_new_tokens: int = MAX_NEW_TOKENS,
+) -> int:
     responses = []
-    for start in range(0, len(rendered), EVAL_BATCH):
+    for start in range(0, len(rendered), batch_size):
         batch = tokenizer(
-            rendered[start : start + EVAL_BATCH],
+            rendered[start : start + batch_size],
             return_tensors="pt",
             padding=True,
             return_token_type_ids=False,
         ).to(model.device)
         output = model.generate(
             **batch,
-            max_new_tokens=MAX_NEW_TOKENS,
+            max_new_tokens=max_new_tokens,
             do_sample=False,
             pad_token_id=tokenizer.pad_token_id,
         )

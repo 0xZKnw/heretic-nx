@@ -236,10 +236,37 @@ def discover_semantic_sites(model: nn.Module) -> SemanticSiteRegistry:
     return SemanticSiteRegistry(tuple(sites), sha256_json(payload))
 
 
-def assert_lfm25_layout(registry: SemanticSiteRegistry) -> None:
-    """Fail closed when the pinned LFM2.5 pilot architecture changes."""
+def assert_lfm25_layout(
+    registry: SemanticSiteRegistry,
+    *,
+    layer_types: Sequence[str] | None = None,
+) -> None:
+    """Fail closed when an LFM2.5 registry disagrees with its architecture.
 
-    counts = {family: len(registry.by_family(family)) for family in ("liv", "gqa", "ffn", "block")}
-    expected = {"liv": 10, "gqa": 6, "ffn": 16, "block": 16}
+    The original 1.2B pilot stays the default. Larger LFM2.5 checkpoints pass
+    their pinned ``config.layer_types`` so the invariant follows the actual
+    hybrid layout rather than assuming a fixed number of layers.
+    """
+
+    counts = {
+        family: len(registry.by_family(family))
+        for family in ("liv", "gqa", "ffn", "block")
+    }
+    if layer_types is None:
+        expected = {"liv": 10, "gqa": 6, "ffn": 16, "block": 16}
+    else:
+        normalized = tuple(str(layer_type).lower() for layer_type in layer_types)
+        if not normalized:
+            raise ValueError("LFM2.5 layer_types cannot be empty")
+        unknown = sorted(set(normalized) - {"conv", "full_attention"})
+        if unknown:
+            raise ValueError(f"unsupported LFM2.5 layer types: {unknown}")
+        layer_count = len(normalized)
+        expected = {
+            "liv": normalized.count("conv"),
+            "gqa": normalized.count("full_attention"),
+            "ffn": layer_count,
+            "block": layer_count,
+        }
     if counts != expected:
         raise RuntimeError(f"unexpected LFM2.5 semantic layout: {counts}, expected {expected}")

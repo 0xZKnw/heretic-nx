@@ -1,0 +1,117 @@
+{
+  "schema_version": "heretic-nx-lfm25-2p6b-prime-release-v1",
+  "release_name": "LFM2.5-2.6B-Heretic-NX-PRIME",
+  "nomenclature": {
+    "engine": "Heretic NX",
+    "algorithm_profile": "Residual-Stream",
+    "validation_protocol": "PRIME",
+    "internal_build": "v8"
+  },
+  "source": {
+    "model": "LiquidAI/LFM2.5-2.6B",
+    "revision": "654f9463ce32b05d0429d76fe1f580b27d4c1ac0"
+  },
+  "candidate": {
+    "model_safetensors_sha256": "42d0f423659e4d5a81640fceb11dc67bea2c7317c2b7eb879883b7d298969ee9",
+    "model_safetensors_size_bytes": 5394427448,
+    "dtype": "bfloat16",
+    "quantized": false,
+    "active_residual_sites": 8,
+    "repair_geometry": "capability-protected rank-1 residual axis",
+    "maximum_strength": 1.0,
+    "row_norm_restoration": "exact"
+  },
+  "optimization_suite": {
+    "harmful_dataset": "mlabonne/harmful_behaviors",
+    "harmful_revision": "01cead01398926d81f7c52bdb790ee8cf77ebba7",
+    "benign_dataset": "mlabonne/harmless_alpaca",
+    "benign_revision": "02c6a92cfcf11bb0c387334f8146d149d65b587f",
+    "rows": 104,
+    "candidate_refusal_markers": 6,
+    "candidate_refusals_per_100": 5.769230769230769,
+    "candidate_first_token_kl": 0.012396278520995452,
+    "kl_hard_cap": 0.0142,
+    "selection_report_sha256": "a6a5e2b12647492b1b592b12fd7ff4405f98940e5cd77ca021986b0b04b69d28",
+    "interpretation": "All 104 harmful rows are optimization evidence, not a locked release holdout. Independent XSTest and paired capability gates are reported below."
+  },
+  "descriptive_heretic_gguf_comparison": {
+    "repository": "Abiray/LFM2.5-2.6B-Heretic-Abliterated-GGUF",
+    "artifact": "LFM2.5-2.6B-heretic-Q8_0.gguf",
+    "matched_local_protocol": {
+      "rows": 104,
+      "max_new_tokens": 96,
+      "temperature": 0,
+      "close_think": true,
+      "refusal_markers": 5,
+      "refusals_per_100": 4.8076923076923075,
+      "report_sha256": "b52cad554a79afcbe571e1dc70c8310062a62381a6d51fe31bc3a9cc9e19a641"
+    },
+    "published_card_kl": 0.0142,
+    "claim_boundary": "The 5/104 refusal result was reproduced locally under the candidate refusal protocol. The comparator card's KL value is quoted as published and was not independently reproduced because its full KL protocol and artifact provenance are not disclosed."
+  },
+  "xstest": {
+    "dataset": "natolambert/xstest-v2-copy",
+    "revision": "b71afe2a6d10e5a6254ea8bcb006c48b095a15d5",
+    "rows": 450,
+    "base_refusal_markers": 149,
+    "candidate_refusal_markers": 16,
+    "safe_rows": 250,
+    "base_safe_refusal_markers": 21,
+    "candidate_safe_refusal_markers": 2,
+    "unsafe_contrast_rows": 200,
+    "base_unsafe_refusal_markers": 128,
+    "candidate_unsafe_refusal_markers": 14,
+    "target_superiority_passed": true,
+    "safe_behavior_noninferiority_passed": true,
+    "report_sha256": "6639d908f2188a85fe86fb380cdbf656bc53c14c295db274d742e853dc9ebed4"
+  },
+  "paired_capability": {
+    "rows": 854,
+    "scoring": "deterministic first-token A/B/C/D",
+    "base_accuracy": 0.617096018735363,
+    "candidate_accuracy": 0.6124121779859485,
+    "candidate_minus_base": -0.00468384074941452,
+    "interval_lower": -0.01756440281030445,
+    "interval_upper": 0.00819672131147541,
+    "noninferiority_margin": 0.03,
+    "noninferiority_passed": true,
+    "equivalence_passed": true,
+    "report_sha256": "62cbbb94d131ecfb7f1103c9d71eab838b29d3934b5579415ccaf998eca0ffd4"
+  },
+  "gguf_bf16": {
+    "filename": "LFM2.5-2.6B-Heretic-NX-PRIME-BF16.gguf",
+    "sha256": "83b7312291673ba9da17cf3022f7021dc9a7cffb4c5427cbeed81f8ee070eb77",
+    "size_bytes": 5403157984,
+    "quantized": false,
+    "converter": "ggml-org/llama.cpp/convert_hf_to_gguf.py",
+    "converter_build": "b10603",
+    "converter_revision": "c060ca974c773c7c3d17fd1b66dc9d312bc292c0",
+    "lm_studio": {
+      "load_success": true,
+      "identifier": "lfm2.5-2.6b-heretic-nx-prime",
+      "context_length": 4096,
+      "full_gpu_offload": true,
+      "smoke_expected_answer": "391",
+      "smoke_final_answer": "391",
+      "eos_found": true,
+      "tokens_per_second": 30.64,
+      "time_to_first_token_seconds": 0.131
+    }
+  },
+  "validation": {
+    "tests_passed": 82,
+    "tests_failed": 0,
+    "smoke_report_sha256": "df6bc37a675a73c385a9fde54e598e6bb15843f0830f56353e504c6beccfbc5c"
+  },
+  "claim_boundaries": {
+    "external_prime_certification": false,
+    "official_universal_winner": false,
+    "direct_quantized_weight_editing_validated": false,
+    "notes": [
+      "PRIME is the project's internal evidence protocol, not a third-party certification.",
+      "The candidate has one additional lexical refusal marker on the matched 104-row comparison, while its measured first-token KL is lower than the comparator card's published KL figure.",
+      "Refusal-marker counts are lexical proxies, not semantic task-success or safety judgments.",
+      "The capability slice and XSTest are independent promotion gates but are not a comprehensive benchmark suite."
+    ]
+  }
+}

@@ -6,6 +6,12 @@ All notable public changes to Heretic NX are documented here.
 
 ### Added
 
+- LFM2.5-2.6B Residual-Stream PRIME pipeline with capability-protected residual
+  axes, sparse repair portfolios and a hard `0.0142` first-token KL cap.
+- Independent 450-row XSTest and 854-row paired capability promotion gates for
+  arbitrary frozen 2.6B candidates.
+- Hash-bound 2.6B release evidence and matched local evaluation of the disclosed
+  Heretic Q8 comparator.
 - Reproducible Heretic master and v1.4.0 closed-comparison configurations.
 - One-command paired external evaluator retaining item-level XSTest,
   StrongREJECT-proxy and capability observations.
@@ -14,6 +20,10 @@ All notable public changes to Heretic NX are documented here.
 
 ### Clarified
 
+- The 2.6B PRIME release records 6/104 lexical refusal markers versus 5/104 for
+  the locally tested Heretic Q8 comparator. Its measured first-token KL is
+  `0.012396`, below the comparator card's published `0.0142`, but that KL
+  comparison remains descriptive because the comparator protocol is incomplete.
 - The stronger Heretic-wide arm has a higher observed target-refusal count than
   Residual-Stream, but the paired target-superiority interval still crosses zero.
 - The comparison is model-specific and does not claim universal engine superiority or third-party certification.

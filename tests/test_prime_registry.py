@@ -109,6 +109,14 @@ def test_lfm_layout_assertion_fails_closed() -> None:
         raise AssertionError("tiny layout must not pass the LFM2.5 guard")
 
 
+def test_lfm_layout_assertion_accepts_pinned_dynamic_hybrid_layout() -> None:
+    registry = discover_semantic_sites(TinyModel())
+    assert_lfm25_layout(
+        registry,
+        layer_types=("conv", "full_attention"),
+    )
+
+
 def test_semantic_registry_supports_llama_and_gemma_style_names() -> None:
     registry = discover_semantic_sites(LlamaStyleModel())
     assert len(registry.by_family("gqa")) == 2
