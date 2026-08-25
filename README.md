@@ -33,9 +33,10 @@ the edit.
 | --- | ---: | ---: | ---: |
 | Matched harmful rows | — | **5 / 104** | 6 / 104 |
 | First-token KL to official base | 0 | published as 0.0142 | **0.012396** |
-| XSTest marker total | 149 / 450 | — | **16 / 450** |
-| XSTest safe marker count | 21 / 250 | — | **2 / 250** |
-| Paired MCQ capability slice | 61.71% | — | 61.24% |
+| XSTest marker total | 149 / 450 | 18 / 450 | **16 / 450** |
+| XSTest safe marker count | 21 / 250 | **2 / 250** | **2 / 250** |
+| XSTest unsafe-contrast markers | 128 / 200 | 16 / 200 | **14 / 200** |
+| Paired MCQ capability slice | 61.71% | 61.36% (Q8 GGUF) | 61.24% (native BF16) |
 
 The refusal comparison is intentionally reported without spin: on the matched
 104-row lexical protocol, the locally tested
@@ -46,16 +47,31 @@ published `0.0142`. The KL comparison is descriptive rather than formally
 matched because the comparator card does not disclose enough protocol and
 artifact provenance to reproduce that value independently.
 
+The comparator is pinned at revision
+`1eaf992a33529fc839cbeca32109a9c4c43b57c4`; the evaluated Q8 file has SHA-256
+`027f0a8308879a21163dd0c981b7397d1b8828dc06ce01e72250d3adf2f87f9b`.
+On the broader matched checks, PRIME has two fewer XSTest marker hits, ties the
+safe-prompt count and is capability-equivalent to the Q8 comparator. PRIME's
+paired native-minus-comparator MCQ difference is `-0.12` point with interval
+`[-2.22, +2.11]` points. As a runtime control, the PRIME BF16 GGUF scored
+`61.48%` through the same llama.cpp restricted-choice path, only `+0.23` point
+from its native score, with `97.89%` prediction agreement. Q8 and BF16 remain
+different precision formats, so the comparison is reported with that caveat.
+
 All 104 harmful rows participated in frontier selection. Promotion therefore
 depends on independent gates: the 450-row XSTest target and safe-behavior tests
 pass, while the 854-row ARC-Challenge/HellaSwag/MMLU first-token slice passes
 the predeclared 3-point capability non-inferiority margin. The full suite now
-contains 82 passing tests.
+contains 84 passing tests.
 
 The native BF16 checkpoint and non-quantized BF16 GGUF are published at
 [`LFM2.5-2.6B-Heretic-NX-PRIME`](https://huggingface.co/0xzknw/LFM2.5-2.6B-Heretic-NX-PRIME).
 Hashes, dataset revisions, independent gates and claim boundaries are recorded
 in [`evidence/lfm25-2p6b-prime/release.json`](evidence/lfm25-2p6b-prime/release.json).
+The matched Q8 runtime reports are
+[`xstest.json`](runs/lfm25-2p6b-gguf-comparator/xstest.json),
+[`capability.json`](runs/lfm25-2p6b-gguf-comparator/capability.json) and the
+[`PRIME GGUF runtime validation`](runs/lfm25-2p6b-gguf-comparator/prime-native-validation.json).
 
 ## LFM2.5 1.2B Thinking result
 
@@ -162,6 +178,13 @@ python -m experiments.lfm25_2p6b_eval xstest `
   --candidate path\to\LFM2.5-2.6B-Heretic-NX-PRIME `
   --run-dir runs\lfm25-2p6b-eval-prime
 ```
+
+The pinned Heretic Q8 comparator can be rerun with
+`experiments/lfm25_2p6b_gguf_comparator_eval.py`. XSTest uses LM Studio's
+OpenAI-compatible completion route. Capability uses llama.cpp's native
+`/completion` route with pre-tokenized prompts and the grammar
+`root ::= [ABCD]`; this preserves one explicit BOS and performs deterministic
+restricted first-token selection without logit bias or sampling.
 
 The internal `v8` suffix identifies the frozen search build. The public model
 name deliberately omits it: **LFM2.5-2.6B-Heretic-NX-PRIME**.

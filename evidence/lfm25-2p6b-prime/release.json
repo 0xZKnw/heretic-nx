@@ -36,7 +36,9 @@
   },
   "descriptive_heretic_gguf_comparison": {
     "repository": "Abiray/LFM2.5-2.6B-Heretic-Abliterated-GGUF",
+    "repository_revision": "1eaf992a33529fc839cbeca32109a9c4c43b57c4",
     "artifact": "LFM2.5-2.6B-heretic-Q8_0.gguf",
+    "artifact_sha256": "027f0a8308879a21163dd0c981b7397d1b8828dc06ce01e72250d3adf2f87f9b",
     "matched_local_protocol": {
       "rows": 104,
       "max_new_tokens": 96,
@@ -46,8 +48,32 @@
       "refusals_per_100": 4.8076923076923075,
       "report_sha256": "b52cad554a79afcbe571e1dc70c8310062a62381a6d51fe31bc3a9cc9e19a641"
     },
+    "matched_xstest": {
+      "rows": 450,
+      "refusal_markers": 18,
+      "safe_rows": 250,
+      "safe_refusal_markers": 2,
+      "unsafe_contrast_rows": 200,
+      "unsafe_refusal_markers": 16,
+      "report_sha256": "07d5225553b2e0f072f23411c85773bcc203839771b85f8b2a60a6a490c21bc6"
+    },
+    "matched_capability": {
+      "rows": 854,
+      "scoring": "llama.cpp grammar-restricted first-token A/B/C/D raw-logit argmax",
+      "comparator_q8_accuracy": 0.6135831381733021,
+      "candidate_native_bf16_accuracy": 0.6124121779859485,
+      "candidate_gguf_bf16_accuracy": 0.6147540983606558,
+      "candidate_native_minus_comparator": -0.00117096018735363,
+      "interval_lower": -0.02224824355971897,
+      "interval_upper": 0.02107728337236534,
+      "equivalence_passed": true,
+      "candidate_gguf_prediction_agreement_with_native": 0.9789227166276346,
+      "candidate_gguf_minus_native_accuracy": 0.0023419203747072626,
+      "comparator_report_sha256": "fa42c04984964091c90767716c6329b21d284d332d920c08c8d031f9577af980",
+      "runtime_validation_report_sha256": "53ba03110f99cb2718d52b36628c6beb3b691fbef78e45f7aaf94f50b6a2ab42"
+    },
     "published_card_kl": 0.0142,
-    "claim_boundary": "The 5/104 refusal result was reproduced locally under the candidate refusal protocol. The comparator card's KL value is quoted as published and was not independently reproduced because its full KL protocol and artifact provenance are not disclosed."
+    "claim_boundary": "The 5/104 refusal, 450-row XSTest and 854-row capability results were reproduced locally on the pinned Q8 artifact. The comparator card's KL value is quoted as published and was not independently reproduced because its full KL protocol and artifact provenance are not disclosed."
   },
   "xstest": {
     "dataset": "natolambert/xstest-v2-copy",
@@ -61,6 +87,9 @@
     "unsafe_contrast_rows": 200,
     "base_unsafe_refusal_markers": 128,
     "candidate_unsafe_refusal_markers": 14,
+    "comparator_refusal_markers": 18,
+    "comparator_safe_refusal_markers": 2,
+    "comparator_unsafe_refusal_markers": 16,
     "target_superiority_passed": true,
     "safe_behavior_noninferiority_passed": true,
     "report_sha256": "6639d908f2188a85fe86fb380cdbf656bc53c14c295db274d742e853dc9ebed4"
@@ -70,12 +99,17 @@
     "scoring": "deterministic first-token A/B/C/D",
     "base_accuracy": 0.617096018735363,
     "candidate_accuracy": 0.6124121779859485,
+    "comparator_q8_accuracy": 0.6135831381733021,
     "candidate_minus_base": -0.00468384074941452,
     "interval_lower": -0.01756440281030445,
     "interval_upper": 0.00819672131147541,
     "noninferiority_margin": 0.03,
     "noninferiority_passed": true,
     "equivalence_passed": true,
+    "candidate_minus_comparator": -0.00117096018735363,
+    "candidate_minus_comparator_interval_lower": -0.02224824355971897,
+    "candidate_minus_comparator_interval_upper": 0.02107728337236534,
+    "candidate_comparator_equivalence_passed": true,
     "report_sha256": "62cbbb94d131ecfb7f1103c9d71eab838b29d3934b5579415ccaf998eca0ffd4"
   },
   "gguf_bf16": {
@@ -99,7 +133,7 @@
     }
   },
   "validation": {
-    "tests_passed": 82,
+    "tests_passed": 84,
     "tests_failed": 0,
     "smoke_report_sha256": "df6bc37a675a73c385a9fde54e598e6bb15843f0830f56353e504c6beccfbc5c"
   },
@@ -110,6 +144,7 @@
     "notes": [
       "PRIME is the project's internal evidence protocol, not a third-party certification.",
       "The candidate has one additional lexical refusal marker on the matched 104-row comparison, while its measured first-token KL is lower than the comparator card's published KL figure.",
+      "On matched independent checks, the candidate has two fewer XSTest lexical markers than the Q8 comparator and equivalent paired MCQ capability within the predeclared 3-point margin.",
       "Refusal-marker counts are lexical proxies, not semantic task-success or safety judgments.",
       "The capability slice and XSTest are independent promotion gates but are not a comprehensive benchmark suite."
     ]

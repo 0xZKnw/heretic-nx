@@ -12,6 +12,8 @@ All notable public changes to Heretic NX are documented here.
   arbitrary frozen 2.6B candidates.
 - Hash-bound 2.6B release evidence and matched local evaluation of the disclosed
   Heretic Q8 comparator.
+- Pinned Q8 GGUF XSTest and 854-row capability reports, plus a cross-runtime
+  validation showing the PRIME BF16 GGUF within 0.23 point of native scoring.
 - Reproducible Heretic master and v1.4.0 closed-comparison configurations.
 - One-command paired external evaluator retaining item-level XSTest,
   StrongREJECT-proxy and capability observations.
@@ -24,6 +26,9 @@ All notable public changes to Heretic NX are documented here.
   the locally tested Heretic Q8 comparator. Its measured first-token KL is
   `0.012396`, below the comparator card's published `0.0142`, but that KL
   comparison remains descriptive because the comparator protocol is incomplete.
+- On independent matched checks, PRIME records 16/450 XSTest markers versus
+  18/450 for the Q8 comparator; paired capability is equivalent at 61.24%
+  native BF16 versus 61.36% Q8 GGUF.
 - The stronger Heretic-wide arm has a higher observed target-refusal count than
   Residual-Stream, but the paired target-superiority interval still crosses zero.
 - The comparison is model-specific and does not claim universal engine superiority or third-party certification.
