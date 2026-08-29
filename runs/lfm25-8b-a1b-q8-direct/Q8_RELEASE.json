@@ -83,6 +83,66 @@
     "report_sha256": "a25d9d7557f4150b5f266e5d04f6b59cf2e5cb264f4fa7fe686ce1d69bb5167a",
     "passed": true
   },
+  "capability_evaluation": {
+    "suite": "deterministic paired ARC-Challenge/HellaSwag/MMLU slice",
+    "rows": 854,
+    "rows_sha256": "3fbb297ade53e1aa09db76f754a9e93f6c26bbcc0dd83053e4a4a7953918cae7",
+    "datasets": {
+      "arc_challenge": {
+        "repository": "allenai/ai2_arc",
+        "revision": "210d026faf9955653af8916fad021475a3f00453",
+        "split": "test",
+        "rows": 256
+      },
+      "hellaswag": {
+        "repository": "Rowan/hellaswag",
+        "revision": "218ec52e09a7e7462a5400043bb9a69a41d06b76",
+        "split": "validation",
+        "rows": 256
+      },
+      "mmlu": {
+        "repository": "cais/mmlu",
+        "revision": "c30699e8356da336a370243923dbaf21066bb9fe",
+        "config": "all",
+        "split": "test",
+        "rows": 342
+      }
+    },
+    "protocol": {
+      "endpoint": "native pre-tokenized /completion",
+      "parallel_slots": 4,
+      "temperature": -1,
+      "max_new_tokens": 1,
+      "grammar": "root ::= [ABCD]",
+      "scoring": "restricted first-token A/B/C/D raw-logit argmax",
+      "close_think": true,
+      "prompt_tokens_sha256": "139a41d113eeed32270216e5fe55ba5b099a99f8e0516ff25f253a080c8b5e27"
+    },
+    "base_accuracy": 0.550351288056206,
+    "candidate_accuracy": 0.550351288056206,
+    "candidate_minus_base": {
+      "mean_difference": 0.0,
+      "paired_bootstrap_95_percent_lower": -0.01288056206088993,
+      "paired_bootstrap_95_percent_upper": 0.01288056206088993,
+      "noninferiority_margin": 0.03,
+      "noninferiority_passed": true,
+      "symmetric_equivalence_passed": true
+    },
+    "paired_counts": {
+      "both_correct": 454,
+      "base_only_correct": 16,
+      "candidate_only_correct": 16,
+      "both_incorrect": 368
+    },
+    "task_accuracy": {
+      "arc_challenge": {"base": 0.73828125, "candidate": 0.7578125},
+      "hellaswag": {"base": 0.36328125, "candidate": 0.34375},
+      "mmlu": {"base": 0.5497076023391813, "candidate": 0.5497076023391813}
+    },
+    "report_sha256": "d3e76035a0423f0708c8c1b9ea26375af776138b4823a27ad26edbf33adca921",
+    "demonstrated_accuracy_improvement": false,
+    "passed": true
+  },
   "validation": {
     "tests_passed": 94,
     "tests_failed": 0,
@@ -96,6 +156,8 @@
     "optimization_suite_is_an_untouched_holdout": false,
     "all_104_harmful_rows_were_used_during_development": true,
     "kl_is_sequence_level": false,
-    "maximum_per_row_kl_is_below_target": false
+    "maximum_per_row_kl_is_below_target": false,
+    "capability_slice_is_comprehensive": false,
+    "aggregate_accuracy_improvement_was_demonstrated": false
   }
 }

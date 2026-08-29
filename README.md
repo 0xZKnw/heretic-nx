@@ -35,6 +35,13 @@ The 9.34 GB evaluated artifact and its exact release manifest are published at
 All 104 harmful rows participated in development; lexical markers are a proxy,
 not semantic task success or an untouched holdout.
 
+On the post-selection 854-row ARC-Challenge/HellaSwag/MMLU capability check,
+the original and Heretic Q8 artifacts both score **55.04%**. Heretic minus base
+is `0.00` point with a paired 95% interval of `[-1.29, +1.29]` points, passing
+the predeclared 3-point non-inferiority and symmetric equivalence gates. This
+supports capability preservation on the measured slice; it does not establish
+an aggregate capability increase.
+
 ## LFM2.5 2.6B — Heretic NX PRIME
 
 The current 2.6B release was regenerated from the pinned official
