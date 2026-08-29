@@ -6,6 +6,13 @@ All notable public changes to Heretic NX are documented here.
 
 ### Added
 
+- Direct, bounded-memory Q8_0 GGUF static merging with hash-bound ablation
+  plans, row-norm preservation, atomic output replacement and stacked MoE
+  expert-bank support.
+- Conditional direct low-rank Q8 deltas with independently fitted right
+  factors for suppressing benign drift without materializing BF16 weights.
+- `hnx inspect-q8` and `hnx abliterate-q8` commands with a no-write dry run and
+  per-tensor payload provenance.
 - LFM2.5-2.6B Residual-Stream PRIME pipeline with capability-protected residual
   axes, sparse repair portfolios and a hard `0.0142` first-token KL cap.
 - Independent 450-row XSTest and 854-row paired capability promotion gates for

@@ -20,6 +20,21 @@ separate implementation around deterministic manifests, streaming statistics,
 low-rank geometry and reproducible evaluation. Comparative reports explicitly
 pin the external checkpoint used as the Heretic baseline.
 
+## LFM2.5 8B-A1B — conditional direct-Q8 release
+
+The 8B-A1B release introduces conditional direct-Q8 deltas: an eight-site
+operator teacher is distilled against 1,024 harmless states and 2,627 harmful
+response-trajectory states, then merged directly into the deployment GGUF.
+The selected `lambda=100`, `beta=2.25` Q8 has **4/104** lexical refusal markers
+and mean full-vocabulary first-token `KL(base Q8 || candidate Q8) = 0.016948`
+over 104 benign rows. The original Q8 has 95/104 markers under the same harmful
+protocol.
+
+The 9.34 GB evaluated artifact and its exact release manifest are published at
+[`LFM2.5-8B-A1B-Heretic-NX-PRIME-GGUF`](https://huggingface.co/0xzknw/LFM2.5-8B-A1B-Heretic-NX-PRIME-GGUF).
+All 104 harmful rows participated in development; lexical markers are a proxy,
+not semantic task success or an untouched holdout.
+
 ## LFM2.5 2.6B — Heretic NX PRIME
 
 The current 2.6B release was regenerated from the pinned official
@@ -154,10 +169,65 @@ python -m venv .venv
 .venv\Scripts\python -m pytest
 ```
 
-The reliable workflow currently edits floating-point source weights and
-quantizes the result afterward. Direct Q8/Q6 GGUF editing is not yet a promoted
-path. For the experimental NF4 adapter path, install the additional `quant`
-extra where bitsandbytes is supported:
+The floating-point workflow remains available, but Heretic NX can also merge a
+precomputed low-rank ablation directly into `Q8_0` matrices inside a GGUF. The
+direct backend processes one matrix (or one stacked MoE expert bank) at a time,
+keeps non-target bytes unchanged and never materializes a full BF16 checkpoint.
+Install its official GGUF dependency with:
+
+```powershell
+.venv\Scripts\python -m pip install -e ".[gguf]"
+```
+
+First inspect the exact tensor names and quantization types:
+
+```powershell
+hnx inspect-q8 --input model-Q8_0.gguf --output q8-tensors.json
+```
+
+An ablation plan binds the source GGUF and a safetensors factor artifact by
+SHA-256. Each `a_key`/`b_key` pair contains an output-space vector or low-rank
+matrix; omitting `b_key` selects a symmetric directional projector. A
+`right_key` instead applies the fitted direct delta `W -= strength * A * R^T`;
+it is mutually exclusive with `b_key` and intentionally disables row-norm
+restoration. Static merge targets may be ordinary 2-D matrices or stacked MoE
+down-projection banks such as `[experts, output, input]`.
+
+```python
+from heretic_nx.edits import GGUFQ8AblationPlan, GGUFQ8TensorEdit
+from heretic_nx.hashing import sha256_file
+
+GGUFQ8AblationPlan(
+    source_sha256=sha256_file("model-Q8_0.gguf"),
+    tensor_artifact_sha256=sha256_file("axes.safetensors"),
+    edits=(
+        GGUFQ8TensorEdit(
+            tensor_name="blk.2.attn_output.weight",
+            a_key="residual_axis.L02",
+            strength=0.8,
+        ),
+    ),
+).write("q8-plan.json")
+```
+
+Validate dimensions and hashes without copying the model, then perform the
+atomic static merge:
+
+```powershell
+hnx abliterate-q8 --input model-Q8_0.gguf --plan q8-plan.json `
+  --tensors axes.safetensors --dry-run
+hnx abliterate-q8 --input model-Q8_0.gguf --output model-Heretic-NX-Q8_0.gguf `
+  --plan q8-plan.json --tensors axes.safetensors
+```
+
+The generated report records source/output hashes, byte offsets and before/
+after hashes for every edited tensor. Q8_0 dequantization and requantization
+are lossy only on declared targets; direction fitting and behavioral/KL
+selection remain separate stages and the final Q8 artifact must be evaluated
+independently. Other GGUF quantization types fail closed for now.
+
+For the experimental NF4 adapter path, install the additional `quant` extra
+where bitsandbytes is supported:
 
 ```powershell
 .venv\Scripts\python -m pip install -e ".[experiments,quant]"

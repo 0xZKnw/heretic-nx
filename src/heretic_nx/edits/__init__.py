@@ -26,6 +26,12 @@ from .nx_ir2 import (
     TimePolicyIR,
 )
 from .nx_ir3 import ArtifactReferenceIR, EditIR3, GateEvidenceIR, NXIR3
+from .gguf_q8 import (
+    GGUFQ8AblationPlan,
+    GGUFQ8TensorEdit,
+    apply_q8_gguf_ablation,
+    inspect_q8_gguf,
+)
 from .sparse import atomic_unit_scores, select_atomic_units
 from .spectral import SignedSpectralEdit, fit_signed_spectral_operator
 
@@ -36,6 +42,8 @@ __all__ = [
     "ArtifactReferenceIR",
     "EditIR3",
     "GateEvidenceIR",
+    "GGUFQ8AblationPlan",
+    "GGUFQ8TensorEdit",
     "LowRankOptimizationResult",
     "NXIR2",
     "NXIR3",
@@ -46,6 +54,7 @@ __all__ = [
     "TimePolicyIR",
     "ThinkClosePolicyIR",
     "activation_forward_hook",
+    "apply_q8_gguf_ablation",
     "apply_residual_stream_weight_edits",
     "affine_operator_from_leace",
     "atomic_unit_scores",
@@ -54,6 +63,7 @@ __all__ = [
     "norm_preserving_weight_edit",
     "fit_low_rank_matrix_operator",
     "fit_signed_spectral_operator",
+    "inspect_q8_gguf",
     "select_atomic_units",
     "snapshot_residual_stream_weights",
     "SignedSpectralEdit",

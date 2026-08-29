@@ -73,6 +73,23 @@ def main() -> None:
     benchmark_parser.add_argument("--observations", type=Path, required=True)
     benchmark_parser.add_argument("--output", type=Path, required=True)
     benchmark_parser.add_argument("--seed", type=int, default=0)
+    inspect_q8_parser = subparsers.add_parser(
+        "inspect-q8",
+        help="list directly editable Q8_0 tensors in a GGUF",
+    )
+    inspect_q8_parser.add_argument("--input", type=Path, required=True)
+    inspect_q8_parser.add_argument("--output", type=Path)
+    ablate_q8_parser = subparsers.add_parser(
+        "abliterate-q8",
+        help="apply a low-rank ablation plan directly to a Q8_0 GGUF",
+    )
+    ablate_q8_parser.add_argument("--input", type=Path, required=True)
+    ablate_q8_parser.add_argument("--output", type=Path)
+    ablate_q8_parser.add_argument("--plan", type=Path, required=True)
+    ablate_q8_parser.add_argument("--tensors", type=Path, required=True)
+    ablate_q8_parser.add_argument("--report", type=Path)
+    ablate_q8_parser.add_argument("--dry-run", action="store_true")
+    ablate_q8_parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -99,6 +116,36 @@ def main() -> None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_bytes(canonical_json(report) + b"\n")
         print(json.dumps(report, indent=2, sort_keys=True))
+    elif args.command == "inspect-q8":
+        from .edits.gguf_q8 import inspect_q8_gguf
+
+        report = inspect_q8_gguf(args.input)
+        rendered = json.dumps(report, indent=2, sort_keys=True)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered + "\n", encoding="utf-8")
+        print(rendered)
+    elif args.command == "abliterate-q8":
+        from .edits.gguf_q8 import apply_q8_gguf_ablation
+
+        if not args.dry_run and args.output is None:
+            parser.error("abliterate-q8 requires --output unless --dry-run is used")
+        report = apply_q8_gguf_ablation(
+            args.input,
+            args.output,
+            args.plan,
+            args.tensors,
+            dry_run=args.dry_run,
+            force=args.force,
+        )
+        rendered = json.dumps(report, indent=2, sort_keys=True)
+        report_path = args.report
+        if report_path is None and args.output is not None and not args.dry_run:
+            report_path = args.output.with_suffix(args.output.suffix + ".hnx.json")
+        if report_path is not None:
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(rendered + "\n", encoding="utf-8")
+        print(rendered)
 
 
 if __name__ == "__main__":

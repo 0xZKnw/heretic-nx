@@ -26,6 +26,7 @@ experiments = [
   "transformers>=5.0",
 ]
 quant = ["bitsandbytes>=0.50"]
+gguf = ["gguf>=0.17.1,<0.18"]
 
 [project.scripts]
 hnx = "heretic_nx.cli:main"
