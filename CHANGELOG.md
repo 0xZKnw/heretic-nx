@@ -74,6 +74,13 @@ All notable public changes to Heretic NX are documented here.
 
 ### Performance
 
+- Strength-sweep candidates now complete independent full-file, payload and
+  untouched-region integrity hashing concurrently, with deterministic report
+  order and publication still held behind the all-candidate validation barrier.
+  Four copy-on-write-style 2.87 GB final scans with full untouched-byte hashing
+  improve from 7.438 s serially to 3.983 s with two workers and 2.172 s with
+  four workers (3.42x versus serial) on the reference Mac; returned snapshots
+  and output bytes are identical.
 - Quantized strength portfolios now share source decoding and invariant
   projector work across 2–32 independently attested v3 plans, while keeping
   same-type requantization, gates, final hashes and publication isolated per

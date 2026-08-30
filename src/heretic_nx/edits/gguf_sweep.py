@@ -10,7 +10,8 @@ publication independent for every candidate.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import gc
 import hashlib
@@ -44,6 +45,9 @@ from .gguf_quant import (
     _validate_tensor_payload_layout,
     _validated_intervals,
 )
+
+
+MAX_FINAL_HASH_WORKERS = 4
 
 
 class GGUFStrengthSweepCandidate(BaseModel):
@@ -155,6 +159,80 @@ class _PayloadState:
     edit: _ResolvedEdit
     accumulator: _ErrorAccumulator | _SearchAccumulator | None
     after_digest: Any
+
+
+def _final_hash_candidate(
+    context: _CandidateContext,
+    intervals: tuple[tuple[int, int], ...],
+    expected_payloads: Mapping[tuple[int, int], int],
+    *,
+    source_untouched_sha256: str,
+    verify_untouched: bool,
+) -> _FileHashSnapshot:
+    """Hash and validate one closed candidate without shared mutable state."""
+
+    assert context.temporary is not None and context.result_rows is not None
+    final_hashes = _file_and_untouched_sha256(
+        context.temporary,
+        intervals,
+        capture_interval_hashes=True,
+        capture_untouched=verify_untouched,
+    )
+    for interval, payload_sha256 in zip(
+        intervals, final_hashes.interval_sha256, strict=True
+    ):
+        edit_index = expected_payloads[interval]
+        expected_sha256 = str(
+            context.result_rows[edit_index]["after_payload_sha256"]
+        )
+        if payload_sha256 != expected_sha256:
+            raise RuntimeError(
+                "post-write GGUF validation failed for "
+                f"{context.result_rows[edit_index]['tensor_name']} "
+                f"in candidate {context.spec.label}"
+            )
+    if verify_untouched and (
+        final_hashes.untouched_sha256 != source_untouched_sha256
+    ):
+        raise RuntimeError(
+            "GGUF bytes changed outside declared tensor payloads for "
+            f"candidate {context.spec.label}"
+        )
+    return final_hashes
+
+
+def _final_hash_candidates(
+    contexts: Sequence[_CandidateContext],
+    intervals: tuple[tuple[int, int], ...],
+    expected_payloads: Mapping[tuple[int, int], int],
+    *,
+    source_untouched_sha256: str,
+    verify_untouched: bool,
+) -> tuple[_FileHashSnapshot, ...]:
+    """Hash independent sweep outputs concurrently in deterministic order."""
+
+    worker_count = min(
+        len(contexts),
+        MAX_FINAL_HASH_WORKERS,
+        max(1, os.cpu_count() or 1),
+    )
+
+    def validate(context: _CandidateContext) -> _FileHashSnapshot:
+        return _final_hash_candidate(
+            context,
+            intervals,
+            expected_payloads,
+            source_untouched_sha256=source_untouched_sha256,
+            verify_untouched=verify_untouched,
+        )
+
+    if worker_count == 1:
+        return tuple(validate(context) for context in contexts)
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix="hnx-gguf-hash",
+    ) as executor:
+        return tuple(executor.map(validate, contexts))
 
 
 def _stable_source_identity(snapshot: _FileHashSnapshot, path: Path) -> bool:
@@ -984,35 +1062,14 @@ def apply_quantized_gguf_strength_sweep(
             ): index
             for index, row in enumerate(prepared_rows)
         }
-        for context in contexts:
-            assert context.temporary is not None and context.result_rows is not None
-            final_hashes = _file_and_untouched_sha256(
-                context.temporary,
-                intervals,
-                capture_interval_hashes=True,
-                capture_untouched=verify_untouched,
-            )
-            for interval, payload_sha256 in zip(
-                intervals, final_hashes.interval_sha256, strict=True
-            ):
-                edit_index = expected_payloads[interval]
-                expected_sha256 = str(
-                    context.result_rows[edit_index]["after_payload_sha256"]
-                )
-                if payload_sha256 != expected_sha256:
-                    raise RuntimeError(
-                        "post-write GGUF validation failed for "
-                        f"{context.result_rows[edit_index]['tensor_name']} "
-                        f"in candidate {context.spec.label}"
-                    )
-            if verify_untouched and (
-                final_hashes.untouched_sha256
-                != source_snapshot.untouched_sha256
-            ):
-                raise RuntimeError(
-                    f"GGUF bytes changed outside declared tensor payloads for "
-                    f"candidate {context.spec.label}"
-                )
+        final_snapshots = _final_hash_candidates(
+            contexts,
+            intervals,
+            expected_payloads,
+            source_untouched_sha256=source_snapshot.untouched_sha256,
+            verify_untouched=verify_untouched,
+        )
+        for context, final_hashes in zip(contexts, final_snapshots, strict=True):
             context.final_hashes = final_hashes
 
         for context in contexts:

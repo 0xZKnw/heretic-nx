@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import threading
 
 import numpy as np
 import pytest
@@ -433,6 +434,107 @@ def test_fast_search_sweep_matches_independent_search_runs(tmp_path: Path) -> No
             merge["edits"][0]["quantization_metrics"]
             == sequential_reports[index]["edits"][0]["quantization_metrics"]
         )
+
+
+def test_strength_sweep_hashes_closed_candidates_concurrently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from heretic_nx.edits import gguf_sweep as sweep_module
+
+    source = tmp_path / "source.gguf"
+    factors = tmp_path / "factors.safetensors"
+    _write_source(source, GGMLQuantizationType.Q8_0)
+    _write_direct_factors(factors)
+    candidates = []
+    for index, strength in enumerate((0.4, 0.8)):
+        plan = tmp_path / f"plan-{index}.json"
+        _write_plan(
+            source,
+            factors,
+            plan,
+            qtype="Q8_0",
+            strength=strength,
+            direct=True,
+        )
+        candidates.append(
+            GGUFStrengthSweepCandidate(
+                label=f"c{index}",
+                plan_path=plan,
+                output_path=tmp_path / f"out-{index}.gguf",
+            )
+        )
+
+    original_hash = sweep_module._file_and_untouched_sha256
+    monkeypatch.setattr(sweep_module.os, "cpu_count", lambda: 2)
+    final_hash_barrier = threading.Barrier(2)
+    final_hash_threads: set[int] = set()
+    thread_lock = threading.Lock()
+
+    def observed_hash(*args: object, **kwargs: object) -> object:
+        if kwargs.get("capture_interval_hashes") is True:
+            with thread_lock:
+                final_hash_threads.add(threading.get_ident())
+            final_hash_barrier.wait(timeout=5)
+        return original_hash(*args, **kwargs)
+
+    monkeypatch.setattr(sweep_module, "_file_and_untouched_sha256", observed_hash)
+    report = apply_quantized_gguf_strength_sweep(source, factors, candidates)
+    assert len(final_hash_threads) == 2
+    for index, candidate in enumerate(candidates):
+        assert (
+            report["candidates"][index]["merge_report"]["output"]["sha256"]
+            == sha256_file(candidate.output_path)
+        )
+
+
+def test_strength_sweep_hash_worker_failure_publishes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from heretic_nx.edits import gguf_sweep as sweep_module
+
+    source = tmp_path / "source.gguf"
+    factors = tmp_path / "factors.safetensors"
+    _write_source(source, GGMLQuantizationType.Q8_0)
+    _write_direct_factors(factors)
+    candidates = []
+    for index, strength in enumerate((0.4, 0.8, 1.2)):
+        plan = tmp_path / f"plan-{index}.json"
+        _write_plan(
+            source,
+            factors,
+            plan,
+            qtype="Q8_0",
+            strength=strength,
+            direct=True,
+        )
+        candidates.append(
+            GGUFStrengthSweepCandidate(
+                label=f"c{index}",
+                plan_path=plan,
+                output_path=tmp_path / f"out-{index}.gguf",
+            )
+        )
+
+    original_hash = sweep_module._file_and_untouched_sha256
+    monkeypatch.setattr(sweep_module.os, "cpu_count", lambda: 3)
+    final_calls = 0
+    call_lock = threading.Lock()
+
+    def failing_hash(*args: object, **kwargs: object) -> object:
+        nonlocal final_calls
+        if kwargs.get("capture_interval_hashes") is True:
+            with call_lock:
+                final_calls += 1
+                call_index = final_calls
+            if call_index == 2:
+                raise RuntimeError("injected final hash failure")
+        return original_hash(*args, **kwargs)
+
+    monkeypatch.setattr(sweep_module, "_file_and_untouched_sha256", failing_hash)
+    with pytest.raises(RuntimeError, match="injected final hash failure"):
+        apply_quantized_gguf_strength_sweep(source, factors, candidates)
+    assert final_calls >= 2
+    assert not any(candidate.output_path.exists() for candidate in candidates)
 
 
 def test_strength_sweep_rejects_source_race_without_publishing(
