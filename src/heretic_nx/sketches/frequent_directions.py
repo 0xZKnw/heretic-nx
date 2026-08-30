@@ -14,13 +14,17 @@ class FrequentDirections:
         *,
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
+        append_chunk_rows: int | None = None,
     ) -> None:
         if rank < 1 or rank > dimension:
             raise ValueError("rank must be in [1, dimension]")
+        if append_chunk_rows is not None and append_chunk_rows < 1:
+            raise ValueError("append_chunk_rows must be positive when provided")
         self.rank = rank
         self.dimension = dimension
         self.device = torch.device(device)
         self.dtype = dtype
+        self.append_chunk_rows = append_chunk_rows
         self._rows = torch.empty((0, dimension), device=self.device, dtype=dtype)
         self.samples_seen = 0
         self.mean = torch.zeros(dimension, device=self.device, dtype=dtype)
@@ -52,9 +56,11 @@ class FrequentDirections:
         self._append(centered)
 
     def _append(self, rows: Tensor) -> None:
-        self._rows = torch.cat((self._rows, rows), dim=0)
-        if self._rows.shape[0] >= 2 * self.rank:
-            self._rows = self._compress(self._rows, shrink=True)
+        chunks = (rows,) if self.append_chunk_rows is None else rows.split(self.append_chunk_rows)
+        for chunk in chunks:
+            self._rows = torch.cat((self._rows, chunk), dim=0)
+            if self._rows.shape[0] >= 2 * self.rank:
+                self._rows = self._compress(self._rows, shrink=True)
 
     def merge(self, other: "FrequentDirections") -> None:
         if (self.rank, self.dimension) != (other.rank, other.dimension):

@@ -11,6 +11,7 @@ from typing import Any
 def canonical_json(value: Any) -> bytes:
     return json.dumps(
         value,
+        allow_nan=False,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

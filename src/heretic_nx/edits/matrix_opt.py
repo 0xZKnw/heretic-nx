@@ -21,6 +21,30 @@ class LowRankOptimizationResult:
     steps: int
 
 
+def _low_rank_frobenius_mean(a: Tensor, b: Tensor) -> Tensor:
+    """Return mean((A B.T)^2) without materializing the dense operator."""
+
+    gram_a = a.T @ a
+    gram_b = b.T @ b
+    return (gram_a * gram_b).sum() / (a.shape[0] * b.shape[0])
+
+
+def _low_rank_spectral_norm(a: Tensor, b: Tensor) -> Tensor:
+    """Return ||A B.T||_2 from its rank-sized QR core."""
+
+    _qa, ra = torch.linalg.qr(a, mode="reduced")
+    _qb, rb = torch.linalg.qr(b, mode="reduced")
+    return torch.linalg.svdvals(ra @ rb.T).amax()
+
+
+def _low_rank_projected_mean_square(values: Tensor, a: Tensor, b: Tensor) -> Tensor:
+    """Return mean(((values B) A.T)^2) in rank-sized space."""
+
+    latent = values @ b
+    gram_a = a.T @ a
+    return ((latent @ gram_a) * latent).sum() / values.numel()
+
+
 def fit_low_rank_matrix_operator(
     target_activations: Tensor,
     protected_activations: Tensor,
@@ -49,7 +73,9 @@ def fit_low_rank_matrix_operator(
         raise ValueError("regularization weights must be non-negative")
 
     generator = torch.Generator(device=target.device).manual_seed(seed)
-    separation = target.mean(dim=0) - protected.mean(dim=0)
+    target_mean = target.mean(dim=0)
+    protected_mean = protected.mean(dim=0)
+    separation = target_mean - protected_mean
     first = F.normalize(separation, dim=0)
     initial = torch.randn(
         target.shape[1], rank, generator=generator, device=target.device, dtype=target.dtype
@@ -63,13 +89,16 @@ def fit_low_rank_matrix_operator(
     protected_scale = protected.square().mean().clamp_min(torch.finfo(target.dtype).eps)
 
     def objective() -> tuple[Tensor, Tensor, Tensor]:
-        target_delta = (target @ b) @ a.T
-        protected_delta = (protected @ b) @ a.T
-        edited_separation = (target - beta * target_delta).mean(dim=0) - protected.mean(dim=0)
+        mean_target_delta = (target_mean @ b) @ a.T
+        edited_separation = target_mean - beta * mean_target_delta - protected_mean
         separation_loss = edited_separation.square().mean() / baseline_separation
-        protected_loss = beta**2 * protected_delta.square().mean() / protected_scale
-        matrix = a @ b.T
-        loss = separation_loss + protected_weight * protected_loss + operator_weight * matrix.square().mean()
+        protected_loss = (
+            beta**2
+            * _low_rank_projected_mean_square(protected, a, b)
+            / protected_scale
+        )
+        operator_loss = _low_rank_frobenius_mean(a, b)
+        loss = separation_loss + protected_weight * protected_loss + operator_weight * operator_loss
         return loss, protected_loss, separation_loss
 
     initial_loss = float(objective()[0].detach().item())
@@ -83,7 +112,7 @@ def fit_low_rank_matrix_operator(
         optimizer.step()
         with torch.no_grad():
             # Bound the spectral scale so beta retains its [0, 1] meaning.
-            norm = torch.linalg.matrix_norm(a @ b.T, ord=2).clamp_min(1.0)
+            norm = _low_rank_spectral_norm(a, b).clamp_min(1.0)
             a.div_(norm.sqrt())
             b.div_(norm.sqrt())
 

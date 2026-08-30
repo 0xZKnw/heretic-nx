@@ -4,7 +4,12 @@ import torch
 
 from heretic_nx.edits.affine import affine_operator_from_leace
 from heretic_nx.edits.activation_op import ActivationOperator, metric_projector_operator
-from heretic_nx.edits.matrix_opt import fit_low_rank_matrix_operator
+from heretic_nx.edits.matrix_opt import (
+    _low_rank_frobenius_mean,
+    _low_rank_projected_mean_square,
+    _low_rank_spectral_norm,
+    fit_low_rank_matrix_operator,
+)
 from heretic_nx.edits.norm_preserving import norm_preserving_weight_edit
 from heretic_nx.edits.nx_ir2 import (
     ActivationEditIR,
@@ -241,3 +246,29 @@ def test_low_rank_matrix_optimizer_reduces_target_separation_with_bounded_drift(
     assert torch.linalg.matrix_norm(
         result.operator.a @ result.operator.b.T, ord=2
     ) <= 1.0001
+
+
+def test_low_rank_operator_statistics_match_dense_formulas() -> None:
+    generator = torch.Generator().manual_seed(211)
+    a = torch.randn(31, 5, generator=generator)
+    b = torch.randn(31, 5, generator=generator)
+    dense = a @ b.T
+    torch.testing.assert_close(
+        _low_rank_frobenius_mean(a, b),
+        dense.square().mean(),
+        atol=2e-6,
+        rtol=2e-6,
+    )
+    torch.testing.assert_close(
+        _low_rank_spectral_norm(a, b),
+        torch.linalg.matrix_norm(dense, ord=2),
+        atol=2e-5,
+        rtol=2e-5,
+    )
+    values = torch.randn(17, 31, generator=generator)
+    torch.testing.assert_close(
+        _low_rank_projected_mean_square(values, a, b),
+        ((values @ b) @ a.T).square().mean(),
+        atol=2e-6,
+        rtol=2e-6,
+    )

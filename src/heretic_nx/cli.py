@@ -39,7 +39,13 @@ def doctor(backend: str) -> dict[str, object]:
         "cuda_available": torch.cuda.is_available(),
         "libraries": {
             name: _package_version(name)
-            for name in ("transformers", "bitsandbytes", "safetensors", "scipy")
+            for name in (
+                "transformers",
+                "bitsandbytes",
+                "safetensors",
+                "scipy",
+                "gguf",
+            )
         },
         "torch_cuda_runtime": torch.version.cuda,
         "operation_budgets": {
@@ -58,6 +64,17 @@ def doctor(backend: str) -> dict[str, object]:
             "total_bytes": total,
             "capability": list(torch.cuda.get_device_capability(0)),
             "memory_caps_bytes": dict(zip(("soft", "hard"), cuda_memory_caps(free))),
+        }
+    try:
+        from .edits.gguf_codecs import NativeGGMLCodec
+
+        native_codec = NativeGGMLCodec()
+    except RuntimeError as error:
+        report["k_quant_codec"] = {"available": False, "error": str(error)}
+    else:
+        report["k_quant_codec"] = {
+            "available": True,
+            **native_codec.provenance(),
         }
     return report
 
@@ -90,6 +107,25 @@ def main() -> None:
     ablate_q8_parser.add_argument("--report", type=Path)
     ablate_q8_parser.add_argument("--dry-run", action="store_true")
     ablate_q8_parser.add_argument("--force", action="store_true")
+    inspect_gguf_parser = subparsers.add_parser(
+        "inspect-gguf",
+        help="inspect same-type editable Q2_K..Q6_K and common quantized tensors",
+    )
+    inspect_gguf_parser.add_argument("--input", type=Path, required=True)
+    inspect_gguf_parser.add_argument("--output", type=Path)
+    inspect_gguf_parser.add_argument("--ggml-library", type=Path)
+    ablate_gguf_parser = subparsers.add_parser(
+        "abliterate-gguf",
+        help="apply a same-type low-rank edit to a mixed-quantization GGUF",
+    )
+    ablate_gguf_parser.add_argument("--input", type=Path, required=True)
+    ablate_gguf_parser.add_argument("--output", type=Path)
+    ablate_gguf_parser.add_argument("--plan", type=Path, required=True)
+    ablate_gguf_parser.add_argument("--tensors", type=Path, required=True)
+    ablate_gguf_parser.add_argument("--report", type=Path)
+    ablate_gguf_parser.add_argument("--ggml-library", type=Path)
+    ablate_gguf_parser.add_argument("--dry-run", action="store_true")
+    ablate_gguf_parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -137,6 +173,40 @@ def main() -> None:
             args.tensors,
             dry_run=args.dry_run,
             force=args.force,
+        )
+        rendered = json.dumps(report, indent=2, sort_keys=True)
+        report_path = args.report
+        if report_path is None and args.output is not None and not args.dry_run:
+            report_path = args.output.with_suffix(args.output.suffix + ".hnx.json")
+        if report_path is not None:
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(rendered + "\n", encoding="utf-8")
+        print(rendered)
+    elif args.command == "inspect-gguf":
+        from .edits.gguf_quant import inspect_quantized_gguf
+
+        report = inspect_quantized_gguf(
+            args.input,
+            ggml_library=args.ggml_library,
+        )
+        rendered = json.dumps(report, indent=2, sort_keys=True)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered + "\n", encoding="utf-8")
+        print(rendered)
+    elif args.command == "abliterate-gguf":
+        from .edits.gguf_quant import apply_quantized_gguf_ablation
+
+        if not args.dry_run and args.output is None:
+            parser.error("abliterate-gguf requires --output unless --dry-run is used")
+        report = apply_quantized_gguf_ablation(
+            args.input,
+            args.output,
+            args.plan,
+            args.tensors,
+            dry_run=args.dry_run,
+            force=args.force,
+            ggml_library=args.ggml_library,
         )
         rendered = json.dumps(report, indent=2, sort_keys=True)
         report_path = args.report

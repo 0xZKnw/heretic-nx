@@ -2,10 +2,25 @@
 
 All notable public changes to Heretic NX are documented here.
 
-## Unreleased
+## 0.3.0 — 2026-08-30
 
 ### Added
 
+- Transactional mixed-GGUF editing for Q2_K through Q6_K plus common legacy
+  quants, backed by llama.cpp's native same-type codecs.
+- Quantization-aware min-drift block selection, optional strength candidates,
+  realized-delta and row-norm gates, opposite-endian rejection and full
+  undeclared-byte verification by default.
+- `hnx inspect-gguf` and `hnx abliterate-gguf`, while retaining the Q8 v1 API.
+- Artifact-bound multi-quant capability certificates and complete-checkpoint
+  validation for KL comparisons, including local llama.cpp `/props` model-path
+  attestation and rejection of identical base/candidate bytes.
+- Rank-space low-rank optimizer statistics and opt-in bounded-batch Frequent
+  Directions compression.
+- Pinned libggml K-codec coverage in CI, atomic no-clobber publication and
+  snapshot-bound source/factor/plan verification.
+- Refusal-cap early termination for frontier screening, while keeping full
+  104-row reports mandatory before KL certification.
 - Direct, bounded-memory Q8_0 GGUF static merging with hash-bound ablation
   plans, row-norm preservation, atomic output replacement and stacked MoE
   expert-bank support.
@@ -32,6 +47,9 @@ All notable public changes to Heretic NX are documented here.
 
 ### Clarified
 
+- K-quant suffixes such as Q4_K_M are mixed file recipes; edits dispatch on
+  each tensor's actual type and every released quantization needs its own
+  same-quant baseline and certificate.
 - Under the corrected single-BOS b10621 protocol, the 2.6B native PRIME release
   records 6/104 lexical refusal markers and its Q8 records 9/104, versus 4/104
   for the locally tested Heretic Q8 comparator. Its measured first-token KL is

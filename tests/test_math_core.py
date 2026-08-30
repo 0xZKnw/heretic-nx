@@ -41,6 +41,23 @@ def test_frequent_directions_recovers_dominant_subspace() -> None:
     assert sketch.rows.shape[0] <= 6
 
 
+def test_frequent_directions_bounds_internal_svd_rows_for_large_batches(monkeypatch) -> None:
+    observed_rows: list[int] = []
+    original_svd = torch.linalg.svd
+
+    def recording_svd(value, *args, **kwargs):
+        observed_rows.append(value.shape[0])
+        return original_svd(value, *args, **kwargs)
+
+    monkeypatch.setattr(torch.linalg, "svd", recording_svd)
+    sketch = FrequentDirections(rank=8, dimension=64, append_chunk_rows=8)
+    sketch.update(torch.randn(1024, 64, generator=torch.Generator().manual_seed(223)))
+    _ = sketch.rows
+
+    assert observed_rows
+    assert max(observed_rows) <= 2 * sketch.rank
+
+
 def test_geometry_gate_rejects_protected_target() -> None:
     protected = torch.eye(8)[:, :2]
     rejected = GeometryGate().evaluate(protected[:, :1], protected)

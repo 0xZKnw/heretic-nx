@@ -32,6 +32,12 @@ from .gguf_q8 import (
     apply_q8_gguf_ablation,
     inspect_q8_gguf,
 )
+from .gguf_quant import (
+    GGUFQuantizedAblationPlan,
+    GGUFQuantizedTensorEdit,
+    apply_quantized_gguf_ablation,
+    inspect_quantized_gguf,
+)
 from .sparse import atomic_unit_scores, select_atomic_units
 from .spectral import SignedSpectralEdit, fit_signed_spectral_operator
 
@@ -44,6 +50,8 @@ __all__ = [
     "GateEvidenceIR",
     "GGUFQ8AblationPlan",
     "GGUFQ8TensorEdit",
+    "GGUFQuantizedAblationPlan",
+    "GGUFQuantizedTensorEdit",
     "LowRankOptimizationResult",
     "NXIR2",
     "NXIR3",
@@ -55,6 +63,7 @@ __all__ = [
     "ThinkClosePolicyIR",
     "activation_forward_hook",
     "apply_q8_gguf_ablation",
+    "apply_quantized_gguf_ablation",
     "apply_residual_stream_weight_edits",
     "affine_operator_from_leace",
     "atomic_unit_scores",
@@ -64,6 +73,7 @@ __all__ = [
     "fit_low_rank_matrix_operator",
     "fit_signed_spectral_operator",
     "inspect_q8_gguf",
+    "inspect_quantized_gguf",
     "select_atomic_units",
     "snapshot_residual_stream_weights",
     "SignedSpectralEdit",

@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
-import math
 from pathlib import Path
 import time
 from typing import Any
@@ -21,6 +20,17 @@ from experiments.lfm25_2p6b_residual_stream import (
     GOOD_REVISION,
     render,
 )
+from heretic_nx.eval.kl_integrity import (
+    first_token_kl,
+    load_completed_log_probabilities,
+    require_distinct_artifacts,
+    require_matching_prompt_set,
+    require_matching_runtime_protocol,
+)
+from heretic_nx.eval.gguf_runtime import (
+    attest_native_model,
+    require_native_model_identity,
+)
 from heretic_nx.hashing import canonical_json, sha256_json
 
 
@@ -29,11 +39,15 @@ TOKENIZER_PATH = ROOT / "checkpoints" / "lfm25-8b-a1b"
 RUN_DIR = ROOT / "runs" / "lfm25-8b-a1b-q8-direct" / "kl"
 VOCAB_SIZE = 128_000
 BATCH_SIZE = 4
+ROW_COUNT = 104
+LOG_PROB_SCHEMA = "lfm25-8b-a1b-q8-first-token-logprobs-v1"
 
 
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(canonical_json(value) + b"\n")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_bytes(canonical_json(value) + b"\n")
+    temporary.replace(path)
 
 
 def log_probs(endpoint: str, tokens: list[int]) -> np.ndarray:
@@ -89,17 +103,23 @@ def prompts() -> tuple[list[list[int]], str]:
 
 def collect(args: argparse.Namespace) -> None:
     token_rows, prompts_sha256 = prompts()
+    runtime_model = attest_native_model(
+        args.endpoint,
+        args.artifact,
+        expected_model=args.model,
+    )
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     array_path = RUN_DIR / f"{args.label}.npy"
     progress_path = RUN_DIR / f"{args.label}.progress.json"
     expected = {
-        "schema_version": "lfm25-8b-a1b-q8-first-token-logprobs-v1",
+        "schema_version": LOG_PROB_SCHEMA,
         "label": args.label,
-        "model": args.model,
+        "model": runtime_model["model_alias"],
         "prompt_tokens_sha256": prompts_sha256,
         "vocab_size": VOCAB_SIZE,
         "count": len(token_rows),
-        "artifact_sha256": args.artifact_sha256,
+        "artifact_sha256": runtime_model["artifact_sha256"],
+        "runtime_model": runtime_model,
     }
     progress = {**expected, "completed": 0, "seconds": 0.0}
     if progress_path.is_file():
@@ -121,6 +141,7 @@ def collect(args: argparse.Namespace) -> None:
     completed = int(progress["completed"])
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
         for start in range(completed, len(token_rows), BATCH_SIZE):
+            require_native_model_identity(args.endpoint, runtime_model)
             batch = token_rows[start : start + BATCH_SIZE]
             started = time.time()
             produced = list(
@@ -144,6 +165,11 @@ def collect(args: argparse.Namespace) -> None:
                 ),
                 flush=True,
             )
+    require_native_model_identity(
+        args.endpoint,
+        runtime_model,
+        verify_artifact_hash=True,
+    )
     print(
         json.dumps(
             {
@@ -160,20 +186,50 @@ def collect(args: argparse.Namespace) -> None:
 def compare(args: argparse.Namespace) -> None:
     base_path = RUN_DIR / f"{args.base_label}.npy"
     candidate_path = RUN_DIR / f"{args.candidate_label}.npy"
-    base = np.load(base_path, mmap_mode="r")
-    candidate = np.load(candidate_path, mmap_mode="r")
-    if base.shape != candidate.shape or base.shape != (104, VOCAB_SIZE):
-        raise RuntimeError("base and candidate KL matrices are not aligned")
+    base_progress_path = RUN_DIR / f"{args.base_label}.progress.json"
+    candidate_progress_path = RUN_DIR / f"{args.candidate_label}.progress.json"
+    base, base_progress = load_completed_log_probabilities(
+        base_path,
+        base_progress_path,
+        schema_version=LOG_PROB_SCHEMA,
+        label=args.base_label,
+        count=ROW_COUNT,
+        vocab_size=VOCAB_SIZE,
+    )
+    candidate, candidate_progress = load_completed_log_probabilities(
+        candidate_path,
+        candidate_progress_path,
+        schema_version=LOG_PROB_SCHEMA,
+        label=args.candidate_label,
+        count=ROW_COUNT,
+        vocab_size=VOCAB_SIZE,
+    )
+    require_matching_prompt_set(
+        base_progress,
+        candidate_progress,
+        base_path=base_progress_path,
+        candidate_path=candidate_progress_path,
+    )
+    require_distinct_artifacts(base_progress, candidate_progress)
+    require_matching_runtime_protocol(base_progress, candidate_progress)
     values = []
     for row in range(base.shape[0]):
-        log_p = np.asarray(base[row], dtype=np.float64)
-        log_q = np.asarray(candidate[row], dtype=np.float64)
-        probability = np.exp(log_p)
-        values.append(float(np.sum(probability * (log_p - log_q))))
+        values.append(first_token_kl(base[row], candidate[row]))
     result = {
         "schema_version": "lfm25-8b-a1b-q8-first-token-kl-v1",
         "base_label": args.base_label,
         "candidate_label": args.candidate_label,
+        "prompt_tokens_sha256": base_progress["prompt_tokens_sha256"],
+        "base_artifact": {
+            "model": base_progress["model"],
+            "sha256": base_progress["artifact_sha256"],
+            "runtime": base_progress["runtime_model"],
+        },
+        "candidate_artifact": {
+            "model": candidate_progress["model"],
+            "sha256": candidate_progress["artifact_sha256"],
+            "runtime": candidate_progress["runtime_model"],
+        },
         "count": len(values),
         "mean_first_token_kl": float(np.mean(values)),
         "maximum_first_token_kl": max(values),
@@ -194,7 +250,7 @@ def main() -> None:
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--label", required=True)
     collect_parser.add_argument("--model", required=True)
-    collect_parser.add_argument("--artifact-sha256", required=True)
+    collect_parser.add_argument("--artifact", type=Path, required=True)
     collect_parser.add_argument("--endpoint", default="http://127.0.0.1:1236")
     collect_parser.add_argument("--parallel", type=int, default=4)
     compare_parser = subparsers.add_parser("compare")

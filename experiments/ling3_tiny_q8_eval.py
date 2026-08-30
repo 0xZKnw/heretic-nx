@@ -69,10 +69,17 @@ def main() -> None:
         help="comma-separated one-based row indices; overrides start/stop",
     )
     parser.add_argument("--max-new-tokens", type=int, default=MAX_NEW_TOKENS)
+    parser.add_argument(
+        "--refusal-cap",
+        type=int,
+        help="stop screening as soon as cap + 1 refusal markers are observed",
+    )
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     if args.parallel <= 0:
         raise ValueError("parallel must be positive")
+    if args.refusal_cap is not None and args.refusal_cap < 0:
+        raise ValueError("refusal-cap must be non-negative")
     if not 0 <= args.start < args.stop <= 104:
         raise ValueError("evaluation bounds must satisfy 0 <= start < stop <= 104")
     selected_indices = None
@@ -113,6 +120,8 @@ def main() -> None:
         "thinking": "off",
         "api": "native pre-tokenized /completion",
     }
+    if args.refusal_cap is not None:
+        expected["refusal_cap"] = args.refusal_cap
     partial = RUN_DIR / f"{args.label}.partial.json"
     checkpoint: dict[str, Any] = {
         **expected,
@@ -130,8 +139,20 @@ def main() -> None:
     if completed != len(responses) or completed > len(prompt_tokens):
         raise RuntimeError(f"invalid evaluation checkpoint: {partial}")
 
+    def marker_hit(text: str) -> int:
+        return int(
+            any(marker in normalized_response(text) for marker in REFUSAL_MARKERS)
+        )
+
+    observed_refusals = sum(marker_hit(text) for text in responses)
+    screening_failed = (
+        args.refusal_cap is not None and observed_refusals > args.refusal_cap
+    )
+
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
         for start in range(completed, len(prompt_tokens), BATCH_SIZE):
+            if screening_failed:
+                break
             batch = prompt_tokens[start : start + BATCH_SIZE]
             started = time.time()
             produced = list(
@@ -151,30 +172,48 @@ def main() -> None:
             checkpoint["responses"] = responses
             checkpoint["completed"] = len(responses)
             write_json(partial, checkpoint)
+            observed_refusals += sum(marker_hit(text) for text in produced)
+            screening_failed = (
+                args.refusal_cap is not None
+                and observed_refusals > args.refusal_cap
+            )
             print(
                 json.dumps(
                     {
                         "evaluation": args.label,
                         "completed": len(responses),
                         "total": len(prompt_tokens),
+                        "refusal_markers": observed_refusals,
+                        "screening_failed": screening_failed,
                         "seconds": round(float(checkpoint["seconds"]), 3),
                     }
                 ),
                 flush=True,
             )
 
-    hits = [
-        int(any(marker in normalized_response(text) for marker in REFUSAL_MARKERS))
-        for text in responses
-    ]
+    hits = [marker_hit(text) for text in responses]
+    complete = len(responses) == len(prompt_tokens)
     report = {
-        "schema_version": "ling3-tiny-q8-refusal-v1",
+        "schema_version": (
+            "ling3-tiny-q8-refusal-v1"
+            if complete
+            else "ling3-tiny-q8-refusal-screening-v1"
+        ),
         "model": args.model,
         "label": args.label,
         "dataset": {"id": BAD_DATASET, "revision": BAD_REVISION},
         "protocol": expected,
         "count": len(responses),
+        "expected_count": len(prompt_tokens),
+        "complete": complete,
         "refusal_markers": sum(hits),
+        "refusal_cap": args.refusal_cap,
+        "screening_stopped_early": screening_failed and not complete,
+        "passed_refusal_cap": (
+            None
+            if args.refusal_cap is None
+            else complete and sum(hits) <= args.refusal_cap
+        ),
         "marker_hits": hits,
         "hit_rows_one_based": [
             index + 1 for index, hit in zip(row_indices, hits) if hit
@@ -190,7 +229,10 @@ def main() -> None:
             {
                 "label": args.label,
                 "count": len(responses),
+                "complete": complete,
                 "refusal_markers": sum(hits),
+                "refusal_cap": args.refusal_cap,
+                "screening_stopped_early": report["screening_stopped_early"],
                 "hit_rows_one_based": report["hit_rows_one_based"],
                 "seconds": report["seconds"],
                 "report": str(report_path),

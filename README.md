@@ -85,7 +85,7 @@ All 104 harmful rows participated in frontier selection. Promotion therefore
 depends on independent gates: the 450-row XSTest target and safe-behavior tests
 pass against the official base, while the 854-row
 ARC-Challenge/HellaSwag/MMLU first-token slice passes the predeclared 3-point
-capability non-inferiority margin. The full suite now contains 85 passing tests.
+capability non-inferiority margin. The full test suite is executed in CI.
 
 The native BF16 checkpoint plus BF16 and Q8_0 GGUF variants are published at
 [`LFM2.5-2.6B-Heretic-NX-PRIME`](https://huggingface.co/0xzknw/LFM2.5-2.6B-Heretic-NX-PRIME).
@@ -177,61 +177,100 @@ python -m venv .venv
 ```
 
 The floating-point workflow remains available, but Heretic NX can also merge a
-precomputed low-rank ablation directly into `Q8_0` matrices inside a GGUF. The
-direct backend processes one matrix (or one stacked MoE expert bank) at a time,
-keeps non-target bytes unchanged and never materializes a full BF16 checkpoint.
-Install its official GGUF dependency with:
+precomputed low-rank ablation directly into mixed-quantization GGUF files. The
+same-type backend supports `Q2_K`, `Q3_K`, `Q4_K`, `Q5_K`, `Q6_K`, `Q4_0`,
+`Q4_1`, `Q5_0`, `Q5_1` and `Q8_0`. It streams matrices and stacked MoE banks in
+fixed row chunks, keeps non-target bytes unchanged and never materializes a
+full BF16 checkpoint. Install the GGUF dependency with:
 
 ```powershell
 .venv\Scripts\python -m pip install -e ".[gguf]"
 ```
 
-First inspect the exact tensor names and quantization types:
+K-quant encoding uses llama.cpp's native `libggml-base`; pass its path with
+`--ggml-library` or set `HERETIC_NX_GGML_LIBRARY`. Heretic NX also discovers a
+local llama.cpp build or a library next to `llama-quantize`. First inspect the
+actual tensor types:
 
 ```powershell
-hnx inspect-q8 --input model-Q8_0.gguf --output q8-tensors.json
+hnx inspect-gguf --input model-Q4_K_M.gguf --output quantized-tensors.json
 ```
 
-An ablation plan binds the source GGUF and a safetensors factor artifact by
-SHA-256. Each `a_key`/`b_key` pair contains an output-space vector or low-rank
-matrix; omitting `b_key` selects a symmetric directional projector. A
-`right_key` instead applies the fitted direct delta `W -= strength * A * R^T`;
-it is mutually exclusive with `b_key` and intentionally disables row-norm
-restoration. Static merge targets may be ordinary 2-D matrices or stacked MoE
-down-projection banks such as `[experts, output, input]`.
+`Q4_K_M`, `Q4_K_S`, `Q5_K_M` and related names are file recipes, not tensor
+types. A single model can contain several K types plus Q8 and float tensors, so
+each plan entry declares the exact expected type and fails closed on a mismatch.
+There is no official `Q6_K_S` tensor type in llama.cpp: the corresponding
+weight format is `Q6_K`, which is supported.
+The plan binds both the source GGUF and its safetensors factors by SHA-256.
 
 ```python
-from heretic_nx.edits import GGUFQ8AblationPlan, GGUFQ8TensorEdit
+from heretic_nx.edits import GGUFQuantizedAblationPlan, GGUFQuantizedTensorEdit
 from heretic_nx.hashing import sha256_file
 
-GGUFQ8AblationPlan(
-    source_sha256=sha256_file("model-Q8_0.gguf"),
+GGUFQuantizedAblationPlan(
+    source_sha256=sha256_file("model-Q4_K_M.gguf"),
     tensor_artifact_sha256=sha256_file("axes.safetensors"),
+    row_chunk_size=128,
     edits=(
-        GGUFQ8TensorEdit(
+        GGUFQuantizedTensorEdit(
             tensor_name="blk.2.attn_output.weight",
+            expected_quantization="Q4_K",
             a_key="residual_axis.L02",
             strength=0.8,
+            quantization_multipliers=(0.75, 1.0, 1.25),
+            minimum_delta_cosine=0.8,
         ),
     ),
-).write("q8-plan.json")
+).write("quantized-plan.json")
 ```
 
 Validate dimensions and hashes without copying the model, then perform the
 atomic static merge:
 
 ```powershell
-hnx abliterate-q8 --input model-Q8_0.gguf --plan q8-plan.json `
+hnx abliterate-gguf --input model-Q4_K_M.gguf --plan quantized-plan.json `
   --tensors axes.safetensors --dry-run
-hnx abliterate-q8 --input model-Q8_0.gguf --output model-Heretic-NX-Q8_0.gguf `
-  --plan q8-plan.json --tensors axes.safetensors
+hnx abliterate-gguf --input model-Q4_K_M.gguf `
+  --output model-Heretic-NX-Q4_K_M.gguf `
+  --plan quantized-plan.json --tensors axes.safetensors
 ```
 
-The generated report records source/output hashes, byte offsets and before/
-after hashes for every edited tensor. Q8_0 dequantization and requantization
-are lossy only on declared targets; direction fitting and behavioral/KL
-selection remain separate stages and the final Q8 artifact must be evaluated
-independently. Other GGUF quantization types fail closed for now.
+The default min-drift policy compares the original encoded block with each
+quantized strength candidate and keeps the representation closest to the
+intended float edit. Reports include realized-delta cosine/error, row-norm
+drift, changed blocks, target-approximation error, codec provenance and a
+tracked-array memory lower bound. Output is reopened, target layouts are
+checked, and by default all undeclared byte ranges are content-verified against
+the immutable pre-edit snapshot before no-clobber atomic publication. Disabling
+`verify_untouched_bytes` is intended only for disposable search candidates.
+
+The legacy `inspect-q8` and `abliterate-q8` commands remain available for v1
+Q8 plans; legacy merges are routed through the same hardened engine. Every
+final quantization must be evaluated independently against an
+untouched baseline of the same recipe: compare base Q4 to edited Q4, never base
+Q8 to edited Q4.
+
+For large candidate frontiers, run the refusal screen before KL. The Ling
+runner accepts `--refusal-cap 6` and stops irreversibly failed candidates as
+soon as the seventh marker is observed; such partial reports are explicitly
+non-certifying. Re-run survivors without the cap for the complete 104-row
+report, then compute KL only for those full-report survivors.
+
+KL collection now takes the GGUF path with `--artifact`, attests the running
+llama.cpp server through `/props`, hashes the local artifact before and after
+collection, and records the runtime build/type in each checkpoint. Comparisons
+reject identical base/candidate bytes, mismatched runtime builds, different
+quantization types, incomplete matrices and unnormalized rows.
+
+The optimizer/backend microbenchmark is reproducible with:
+
+```powershell
+python benchmarks/backend_microbench.py
+```
+
+It compares the former dense `d x d` regularization path with the rank-space
+implementation and times native Q4_K/Q6_K codecs. Its speedup is a component
+measurement, not a claim that complete model evaluation is equally faster.
 
 For the experimental NF4 adapter path, install the additional `quant` extra
 where bitsandbytes is supported:

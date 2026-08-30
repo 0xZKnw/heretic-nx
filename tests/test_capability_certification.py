@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
 import torch
 
 from heretic_nx.eval.capability import (
+    SequenceDrift,
     certify_artifact_set,
     certify_capability_preservation,
     paired_bootstrap_interval,
@@ -120,7 +124,63 @@ def test_every_distributed_quantization_requires_its_own_certificate() -> None:
     baseline = {"reasoning": torch.linspace(0.5, 1.0, 40)}
     logits = torch.randn(1, 3, 5, generator=torch.Generator().manual_seed(181))
     drift = teacher_forced_sequence_kl(logits, logits, torch.ones(1, 3, dtype=torch.bool))
-    certificate = certify_capability_preservation(
+    bf16_certificate = certify_capability_preservation(
+        baseline,
+        baseline,
+        {"reasoning": 0.01},
+        drift,
+        sequence_kl_maximum=0.01,
+        resamples=500,
+        artifact_id="bf16",
+        artifact_sha256="a" * 64,
+        quantization="BF16",
+    )
+    q4_certificate = certify_capability_preservation(
+        baseline,
+        baseline,
+        {"reasoning": 0.01},
+        drift,
+        sequence_kl_maximum=0.01,
+        resamples=500,
+        artifact_id="q4_k_m",
+        artifact_sha256="b" * 64,
+        quantization="Q4_K_M",
+    )
+    missing_quant = certify_artifact_set(
+        {"bf16": bf16_certificate},
+        required_artifacts=("bf16", "q4_k_m"),
+    )
+    assert not missing_quant.passed
+    assert missing_quant.blocking_artifacts == ("q4_k_m",)
+    complete = certify_artifact_set(
+        {"bf16": bf16_certificate, "q4_k_m": q4_certificate},
+        required_artifacts=("bf16", "q4_k_m"),
+    )
+    assert complete.passed
+
+    reused = certify_artifact_set(
+        {"bf16": bf16_certificate, "q4_k_m": bf16_certificate},
+        required_artifacts=("bf16", "q4_k_m"),
+    )
+    assert not reused.passed
+    assert reused.blocking_artifacts == ("q4_k_m",)
+
+    duplicate_bytes = certify_artifact_set(
+        {
+            "bf16": bf16_certificate,
+            "q4_k_m": replace(q4_certificate, artifact_sha256="a" * 64),
+        },
+        required_artifacts=("bf16", "q4_k_m"),
+    )
+    assert not duplicate_bytes.passed
+    assert duplicate_bytes.blocking_artifacts == ("bf16", "q4_k_m")
+
+
+def test_artifact_set_rejects_unbound_or_mismatched_certificates() -> None:
+    baseline = {"reasoning": torch.linspace(0.5, 1.0, 40)}
+    logits = torch.randn(1, 3, 5, generator=torch.Generator().manual_seed(191))
+    drift = teacher_forced_sequence_kl(logits, logits, torch.ones(1, 3, dtype=torch.bool))
+    legacy_unbound = certify_capability_preservation(
         baseline,
         baseline,
         {"reasoning": 0.01},
@@ -128,14 +188,97 @@ def test_every_distributed_quantization_requires_its_own_certificate() -> None:
         sequence_kl_maximum=0.01,
         resamples=500,
     )
-    missing_quant = certify_artifact_set(
-        {"bf16": certificate},
-        required_artifacts=("bf16", "q4_k_m"),
+    bound = replace(
+        legacy_unbound,
+        artifact_id="release-q4",
+        artifact_sha256="c" * 64,
+        quantization="Q4_K_M",
     )
-    assert not missing_quant.passed
-    assert missing_quant.blocking_artifacts == ("q4_k_m",)
-    complete = certify_artifact_set(
-        {"bf16": certificate, "q4_k_m": certificate},
-        required_artifacts=("bf16", "q4_k_m"),
+
+    unbound = certify_artifact_set(
+        {"release-q4": legacy_unbound},
+        required_artifacts={"release-q4": "Q4_K_M"},
     )
-    assert complete.passed
+    assert not unbound.passed
+
+    wrong_id = certify_artifact_set(
+        {"release-q4": replace(bound, artifact_id="other")},
+        required_artifacts={"release-q4": "Q4_K_M"},
+    )
+    assert not wrong_id.passed
+
+    wrong_quantization = certify_artifact_set(
+        {"release-q4": replace(bound, quantization="Q8_0")},
+        required_artifacts={"release-q4": "Q4_K_M"},
+    )
+    assert not wrong_quantization.passed
+
+
+def test_capability_certificate_requires_complete_valid_artifact_identity() -> None:
+    baseline = {"reasoning": torch.linspace(0.5, 1.0, 40)}
+    logits = torch.zeros(1, 3, 5)
+    drift = teacher_forced_sequence_kl(logits, logits, torch.ones(1, 3, dtype=torch.bool))
+
+    with pytest.raises(ValueError, match="must be supplied together"):
+        certify_capability_preservation(
+            baseline,
+            baseline,
+            {"reasoning": 0.01},
+            drift,
+            sequence_kl_maximum=0.01,
+            resamples=500,
+            artifact_id="q4_k_m",
+        )
+
+    with pytest.raises(ValueError, match="lowercase SHA-256"):
+        certify_capability_preservation(
+            baseline,
+            baseline,
+            {"reasoning": 0.01},
+            drift,
+            sequence_kl_maximum=0.01,
+            resamples=500,
+            artifact_id="q4_k_m",
+            artifact_sha256="not-a-digest",
+            quantization="Q4_K_M",
+        )
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_sequence_drift_rejects_non_finite_metrics(value: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        SequenceDrift(
+            token_count=4,
+            mean_token_kl=value,
+            maximum_sequence_kl=0.01,
+            mean_topk_mass_coverage=0.9,
+        )
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_capability_rejects_non_finite_thresholds(value: float) -> None:
+    baseline = {"reasoning": torch.linspace(0.5, 1.0, 40)}
+    drift = SequenceDrift(
+        token_count=4,
+        mean_token_kl=0.0,
+        maximum_sequence_kl=0.0,
+        mean_topk_mass_coverage=1.0,
+    )
+    with pytest.raises(ValueError, match="invalid"):
+        certify_capability_preservation(
+            baseline,
+            baseline,
+            {"reasoning": 0.01},
+            drift,
+            sequence_kl_maximum=value,
+            resamples=500,
+        )
+    with pytest.raises(ValueError, match="invalid"):
+        certify_capability_preservation(
+            baseline,
+            baseline,
+            {"reasoning": value},
+            drift,
+            sequence_kl_maximum=0.01,
+            resamples=500,
+        )

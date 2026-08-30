@@ -17,6 +17,19 @@ from transformers import AutoTokenizer
 
 from experiments.lfm25_2p6b_residual_stream import GOOD_DATASET, GOOD_REVISION
 from experiments.ling3_tiny_q8_eval import render
+from heretic_nx.eval.kl_integrity import (
+    default_progress_path,
+    first_token_kl,
+    load_completed_log_probabilities,
+    load_completed_raw_logits,
+    require_distinct_artifacts,
+    require_matching_prompt_set,
+    require_matching_runtime_protocol,
+)
+from heretic_nx.eval.gguf_runtime import (
+    attest_native_model,
+    require_native_model_identity,
+)
 from heretic_nx.hashing import canonical_json, sha256_json
 
 
@@ -25,11 +38,16 @@ TOKENIZER_PATH = ROOT / "checkpoints" / "ling3-tiny"
 RUN_DIR = ROOT / "runs" / "ling3-tiny-q8-direct" / "kl"
 VOCAB_SIZE = 157_184
 BATCH_SIZE = 4
+ROW_COUNT = 104
+LOG_PROB_SCHEMA = "ling3-tiny-q8-first-token-logprobs-v1"
+RAW_LOGIT_SCHEMA = "ling3-tiny-q8-first-token-raw-logits-v1"
 
 
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(canonical_json(value) + b"\n")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_bytes(canonical_json(value) + b"\n")
+    temporary.replace(path)
 
 
 def log_probs(endpoint: str, tokens: list[int]) -> np.ndarray:
@@ -114,17 +132,16 @@ def export_tokens(args: argparse.Namespace) -> None:
     )
 
 
-def raw_logits(path: Path) -> np.memmap:
-    expected_values = 104 * VOCAB_SIZE
-    expected_bytes = expected_values * np.dtype(np.float32).itemsize
-    if path.stat().st_size != expected_bytes:
-        raise RuntimeError(
-            f"invalid raw logits size for {path}: {path.stat().st_size} != {expected_bytes}"
-        )
-    matrix = np.memmap(path, mode="r", dtype=np.float32, shape=(104, VOCAB_SIZE))
-    if not np.isfinite(matrix).all():
-        raise RuntimeError(f"non-finite raw logits in {path}")
-    return matrix
+def raw_logits(
+    path: Path, progress_path: Path | None = None
+) -> tuple[np.memmap, dict[str, Any]]:
+    return load_completed_raw_logits(
+        path,
+        progress_path or default_progress_path(path),
+        schema_version=RAW_LOGIT_SCHEMA,
+        count=ROW_COUNT,
+        vocab_size=VOCAB_SIZE,
+    )
 
 
 def normalized_log_probs(logits: np.ndarray) -> np.ndarray:
@@ -136,19 +153,49 @@ def normalized_log_probs(logits: np.ndarray) -> np.ndarray:
 def compare_raw(args: argparse.Namespace) -> None:
     base_path = Path(args.base)
     candidate_path = Path(args.candidate)
-    base = raw_logits(base_path)
-    candidate = raw_logits(candidate_path)
+    base_progress_path = (
+        Path(args.base_progress)
+        if args.base_progress is not None
+        else default_progress_path(base_path)
+    )
+    candidate_progress_path = (
+        Path(args.candidate_progress)
+        if args.candidate_progress is not None
+        else default_progress_path(candidate_path)
+    )
+    base, base_progress = raw_logits(base_path, base_progress_path)
+    candidate, candidate_progress = raw_logits(
+        candidate_path, candidate_progress_path
+    )
+    require_matching_prompt_set(
+        base_progress,
+        candidate_progress,
+        base_path=base_progress_path,
+        candidate_path=candidate_progress_path,
+    )
+    require_distinct_artifacts(base_progress, candidate_progress)
+    require_matching_runtime_protocol(base_progress, candidate_progress)
     values = []
     for row in range(base.shape[0]):
         log_p = normalized_log_probs(base[row])
         log_q = normalized_log_probs(candidate[row])
-        probability = np.exp(log_p)
-        values.append(float(np.sum(probability * (log_p - log_q))))
+        values.append(first_token_kl(log_p, log_q))
     mean = float(np.mean(values))
     result = {
         "schema_version": "ling3-tiny-q8-first-token-kl-raw-v1",
         "base": str(base_path),
         "candidate": str(candidate_path),
+        "prompt_tokens_sha256": base_progress["prompt_tokens_sha256"],
+        "base_artifact": {
+            "model": base_progress["model"],
+            "sha256": base_progress["artifact_sha256"],
+            "runtime": base_progress["runtime_model"],
+        },
+        "candidate_artifact": {
+            "model": candidate_progress["model"],
+            "sha256": candidate_progress["artifact_sha256"],
+            "runtime": candidate_progress["runtime_model"],
+        },
         "count": len(values),
         "vocab_size": VOCAB_SIZE,
         "mean_first_token_kl": mean,
@@ -166,17 +213,23 @@ def compare_raw(args: argparse.Namespace) -> None:
 
 def collect(args: argparse.Namespace) -> None:
     token_rows, prompts_sha256 = prompts()
+    runtime_model = attest_native_model(
+        args.endpoint,
+        args.artifact,
+        expected_model=args.model,
+    )
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     array_path = RUN_DIR / f"{args.label}.npy"
     progress_path = RUN_DIR / f"{args.label}.progress.json"
     expected = {
-        "schema_version": "ling3-tiny-q8-first-token-logprobs-v1",
+        "schema_version": LOG_PROB_SCHEMA,
         "label": args.label,
-        "model": args.model,
+        "model": runtime_model["model_alias"],
         "prompt_tokens_sha256": prompts_sha256,
         "vocab_size": VOCAB_SIZE,
         "count": len(token_rows),
-        "artifact_sha256": args.artifact_sha256,
+        "artifact_sha256": runtime_model["artifact_sha256"],
+        "runtime_model": runtime_model,
         "thinking": "off",
     }
     progress = {**expected, "completed": 0, "seconds": 0.0}
@@ -199,6 +252,7 @@ def collect(args: argparse.Namespace) -> None:
     completed = int(progress["completed"])
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
         for start in range(completed, len(token_rows), BATCH_SIZE):
+            require_native_model_identity(args.endpoint, runtime_model)
             batch = token_rows[start : start + BATCH_SIZE]
             started = time.time()
             produced = list(pool.map(lambda row: log_probs(args.endpoint, row), batch))
@@ -218,6 +272,11 @@ def collect(args: argparse.Namespace) -> None:
                 ),
                 flush=True,
             )
+    require_native_model_identity(
+        args.endpoint,
+        runtime_model,
+        verify_artifact_hash=True,
+    )
     print(
         json.dumps(
             {
@@ -235,21 +294,53 @@ def collect(args: argparse.Namespace) -> None:
 def compare(args: argparse.Namespace) -> None:
     base_path = RUN_DIR / f"{args.base_label}.npy"
     candidate_path = RUN_DIR / f"{args.candidate_label}.npy"
-    base = np.load(base_path, mmap_mode="r")
-    candidate = np.load(candidate_path, mmap_mode="r")
-    if base.shape != candidate.shape or base.shape != (104, VOCAB_SIZE):
-        raise RuntimeError("base and candidate KL matrices are not aligned")
+    base_progress_path = RUN_DIR / f"{args.base_label}.progress.json"
+    candidate_progress_path = RUN_DIR / f"{args.candidate_label}.progress.json"
+    base, base_progress = load_completed_log_probabilities(
+        base_path,
+        base_progress_path,
+        schema_version=LOG_PROB_SCHEMA,
+        label=args.base_label,
+        count=ROW_COUNT,
+        vocab_size=VOCAB_SIZE,
+        required_values={"thinking": "off"},
+    )
+    candidate, candidate_progress = load_completed_log_probabilities(
+        candidate_path,
+        candidate_progress_path,
+        schema_version=LOG_PROB_SCHEMA,
+        label=args.candidate_label,
+        count=ROW_COUNT,
+        vocab_size=VOCAB_SIZE,
+        required_values={"thinking": "off"},
+    )
+    require_matching_prompt_set(
+        base_progress,
+        candidate_progress,
+        base_path=base_progress_path,
+        candidate_path=candidate_progress_path,
+    )
+    require_distinct_artifacts(base_progress, candidate_progress)
+    require_matching_runtime_protocol(base_progress, candidate_progress)
     values = []
     for row in range(base.shape[0]):
-        log_p = np.asarray(base[row], dtype=np.float64)
-        log_q = np.asarray(candidate[row], dtype=np.float64)
-        probability = np.exp(log_p)
-        values.append(float(np.sum(probability * (log_p - log_q))))
+        values.append(first_token_kl(base[row], candidate[row]))
     mean = float(np.mean(values))
     result = {
         "schema_version": "ling3-tiny-q8-first-token-kl-v1",
         "base_label": args.base_label,
         "candidate_label": args.candidate_label,
+        "prompt_tokens_sha256": base_progress["prompt_tokens_sha256"],
+        "base_artifact": {
+            "model": base_progress["model"],
+            "sha256": base_progress["artifact_sha256"],
+            "runtime": base_progress["runtime_model"],
+        },
+        "candidate_artifact": {
+            "model": candidate_progress["model"],
+            "sha256": candidate_progress["artifact_sha256"],
+            "runtime": candidate_progress["runtime_model"],
+        },
         "count": len(values),
         "mean_first_token_kl": mean,
         "maximum_first_token_kl": max(values),
@@ -270,7 +361,7 @@ def main() -> None:
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--label", required=True)
     collect_parser.add_argument("--model", required=True)
-    collect_parser.add_argument("--artifact-sha256", required=True)
+    collect_parser.add_argument("--artifact", type=Path, required=True)
     collect_parser.add_argument("--endpoint", default="http://127.0.0.1:1236")
     collect_parser.add_argument("--parallel", type=int, default=4)
     compare_parser = subparsers.add_parser("compare")
@@ -282,6 +373,8 @@ def main() -> None:
     raw_parser.add_argument("--base", required=True)
     raw_parser.add_argument("--candidate", required=True)
     raw_parser.add_argument("--report", required=True)
+    raw_parser.add_argument("--base-progress")
+    raw_parser.add_argument("--candidate-progress")
     args = parser.parse_args()
     if args.command == "collect":
         if args.parallel <= 0:
