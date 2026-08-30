@@ -70,6 +70,11 @@ All notable public changes to Heretic NX are documented here.
   cuts a real merge from six full/partial verification scans to two without
   weakening source binding or undeclared-byte checks; the reproducible 128 MiB
   microbenchmark is 1.72x faster on the reference Mac.
+- Native same-type quantization now splits independent row ranges across a
+  lazy, affinity-aware worker pool while preserving exact encoded bytes. On the
+  16 MiB reference workload, Q2_K through Q6_K encode roughly 4.0x–5.1x faster
+  with eight workers; a complete Q4_K edit kernel is 2.92x faster with identical
+  payload and report metrics.
 
 ### Fixed
 

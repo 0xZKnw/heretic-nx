@@ -189,8 +189,11 @@ full BF16 checkpoint. Install the GGUF dependency with:
 
 K-quant encoding uses llama.cpp's native `libggml-base`; pass its path with
 `--ggml-library` or set `HERETIC_NX_GGML_LIBRARY`. Heretic NX also discovers a
-local llama.cpp build or a library next to `llama-quantize`. First inspect the
-actual tensor types:
+local llama.cpp build or a library next to `llama-quantize`. Native encoding is
+row-parallel above 65,536 elements and automatically uses up to eight
+affinity-aware CPU workers. Set `HERETIC_NX_QUANT_THREADS=1` for serial
+execution, `auto` for the default, or a positive integer to tune the worker
+count. First inspect the actual tensor types:
 
 ```powershell
 hnx inspect-gguf --input model-Q4_K_M.gguf --output quantized-tensors.json
@@ -266,11 +269,14 @@ The optimizer/backend microbenchmark is reproducible with:
 
 ```powershell
 python benchmarks/backend_microbench.py
+python benchmarks/gguf_codec_parallel.py
 ```
 
 It compares the former dense `d x d` regularization path with the rank-space
-implementation and times native Q4_K/Q6_K codecs. Its speedup is a component
-measurement, not a claim that complete model evaluation is equally faster.
+implementation and times native Q4_K/Q6_K codecs. The dedicated codec benchmark
+checks bit identity and reports Q2_K through Q6_K scaling across worker counts.
+These speedups are component measurements, not claims that complete model
+evaluation is equally faster.
 
 For the experimental NF4 adapter path, install the additional `quant` extra
 where bitsandbytes is supported:

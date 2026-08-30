@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
+import threading
 from typing import Any
 
 import numpy as np
@@ -35,6 +37,41 @@ QUANT_LAYOUTS: dict[str, QuantLayout] = {
     "Q5_K": QuantLayout(256, 176, "q5_K", requires_native=True),
     "Q6_K": QuantLayout(256, 210, "q6_K", requires_native=True),
 }
+
+
+DEFAULT_PARALLEL_MIN_ELEMENTS = 65_536
+MAX_AUTO_QUANTIZATION_THREADS = 8
+
+
+def _available_cpu_count() -> int:
+    """Return an affinity-aware CPU count when the platform exposes one."""
+
+    get_affinity = getattr(os, "sched_getaffinity", None)
+    if get_affinity is not None:
+        try:
+            return max(1, len(get_affinity(0)))
+        except OSError:
+            pass
+    return max(1, os.cpu_count() or 1)
+
+
+def _resolve_quantization_threads(value: int | None) -> int:
+    """Resolve explicit/env/auto native quantization parallelism."""
+
+    if value is None:
+        configured = os.environ.get("HERETIC_NX_QUANT_THREADS")
+        if configured and configured.strip().lower() != "auto":
+            try:
+                value = int(configured)
+            except ValueError as error:
+                raise ValueError(
+                    "HERETIC_NX_QUANT_THREADS must be 'auto' or a positive integer"
+                ) from error
+    if value is None:
+        return min(MAX_AUTO_QUANTIZATION_THREADS, _available_cpu_count())
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("quantization_threads must be a positive integer or None")
+    return value
 
 
 def _library_globs(directory: Path) -> tuple[Path, ...]:
@@ -80,7 +117,25 @@ def _native_library_candidates(explicit: str | Path | None) -> tuple[str | Path,
 class NativeGGMLCodec:
     """ctypes binding to llama.cpp's reference-compatible row codecs."""
 
-    def __init__(self, library: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        library: str | Path | None = None,
+        *,
+        quantization_threads: int | None = None,
+        parallel_min_elements: int = DEFAULT_PARALLEL_MIN_ELEMENTS,
+    ) -> None:
+        if (
+            isinstance(parallel_min_elements, bool)
+            or not isinstance(parallel_min_elements, int)
+            or parallel_min_elements < 1
+        ):
+            raise ValueError("parallel_min_elements must be a positive integer")
+        self.quantization_threads = _resolve_quantization_threads(
+            quantization_threads
+        )
+        self.parallel_min_elements = parallel_min_elements
+        self._executor: ThreadPoolExecutor | None = None
+        self._executor_lock = threading.Lock()
         failures: list[str] = []
         explicit = library is not None
         for candidate in _native_library_candidates(library):
@@ -107,6 +162,35 @@ class NativeGGMLCodec:
             "set HERETIC_NX_GGML_LIBRARY, or install/build llama.cpp. "
             f"Discovery details: {detail}"
         )
+
+    def _get_executor(self) -> ThreadPoolExecutor:
+        executor = self._executor
+        if executor is not None:
+            return executor
+        with self._executor_lock:
+            executor = self._executor
+            if executor is None:
+                executor = ThreadPoolExecutor(
+                    max_workers=self.quantization_threads,
+                    thread_name_prefix="hnx-ggml-quant",
+                )
+                self._executor = executor
+        return executor
+
+    def close(self) -> None:
+        """Release lazily-created native quantization workers."""
+
+        with self._executor_lock:
+            executor = self._executor
+            self._executor = None
+        if executor is not None:
+            executor.shutdown(wait=True)
+
+    def __enter__(self) -> "NativeGGMLCodec":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
     @staticmethod
     def _configure(library: ctypes.CDLL) -> None:
@@ -218,19 +302,48 @@ class NativeGGMLCodec:
         row_bytes = matrix.shape[1] // layout.block_size * layout.type_size
         output = np.empty((matrix.shape[0], row_bytes), dtype=np.uint8)
         quantize = getattr(self._library, f"quantize_{layout.native_suffix}")
-        written = int(
-            quantize(
-                matrix.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                output.ctypes.data_as(ctypes.c_void_p),
-                matrix.shape[0],
-                matrix.shape[1],
-                None,
+
+        def quantize_range(start: int, stop: int) -> None:
+            source_rows = matrix[start:stop]
+            output_rows = output[start:stop]
+            written = int(
+                quantize(
+                    source_rows.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                    output_rows.ctypes.data_as(ctypes.c_void_p),
+                    stop - start,
+                    matrix.shape[1],
+                    None,
+                )
             )
+            if written != output_rows.nbytes:
+                raise RuntimeError(
+                    f"native {qtype.name} quantizer wrote {written} bytes; "
+                    f"expected {output_rows.nbytes}"
+                )
+
+        worker_count = (
+            min(self.quantization_threads, matrix.shape[0])
+            if self.quantization_threads > 1
+            and matrix.size >= self.parallel_min_elements
+            else 1
         )
-        if written != output.nbytes:
-            raise RuntimeError(
-                f"native {qtype.name} quantizer wrote {written} bytes; expected {output.nbytes}"
-            )
+        if worker_count == 1:
+            quantize_range(0, matrix.shape[0])
+        else:
+            rows_per_worker, remainder = divmod(matrix.shape[0], worker_count)
+            ranges = []
+            start = 0
+            for worker_index in range(worker_count):
+                stop = start + rows_per_worker + int(worker_index < remainder)
+                ranges.append((start, stop))
+                start = stop
+            executor = self._get_executor()
+            futures = [
+                executor.submit(quantize_range, start, stop)
+                for start, stop in ranges
+            ]
+            for future in futures:
+                future.result()
         self.validate_payload(output, qtype)
         return output
 
@@ -239,6 +352,8 @@ class NativeGGMLCodec:
             "backend": "libggml-base",
             "path": self.path,
             "sha256": self.sha256,
+            "quantization_threads": self.quantization_threads,
+            "parallel_min_elements": self.parallel_min_elements,
         }
 
 
@@ -250,9 +365,19 @@ class GGUFQuantizationCodecRegistry:
         *,
         ggml_library: str | Path | None = None,
         prefer_native: bool = True,
+        quantization_threads: int | None = None,
+        parallel_min_elements: int = DEFAULT_PARALLEL_MIN_ELEMENTS,
     ) -> None:
+        if (
+            isinstance(parallel_min_elements, bool)
+            or not isinstance(parallel_min_elements, int)
+            or parallel_min_elements < 1
+        ):
+            raise ValueError("parallel_min_elements must be a positive integer")
         self._ggml_library = ggml_library
         self._prefer_native = prefer_native
+        self._quantization_threads = quantization_threads
+        self._parallel_min_elements = parallel_min_elements
         self._native: NativeGGMLCodec | None = None
         self._native_unavailable = False
 
@@ -262,13 +387,29 @@ class GGUFQuantizationCodecRegistry:
         if self._native_unavailable and not required:
             return None
         try:
-            self._native = NativeGGMLCodec(self._ggml_library)
+            self._native = NativeGGMLCodec(
+                self._ggml_library,
+                quantization_threads=self._quantization_threads,
+                parallel_min_elements=self._parallel_min_elements,
+            )
             return self._native
         except RuntimeError:
             if required or self._ggml_library is not None:
                 raise
             self._native_unavailable = True
             return None
+
+    def close(self) -> None:
+        """Release native worker threads, if native quantization was used."""
+
+        if self._native is not None:
+            self._native.close()
+
+    def __enter__(self) -> "GGUFQuantizationCodecRegistry":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
     def ensure_supported(self, qtype: Any) -> None:
         layout = QUANT_LAYOUTS.get(qtype.name)
