@@ -100,9 +100,18 @@ All notable public changes to Heretic NX are documented here.
   selected rows in vocabulary-aware chunks with reusable buffers. At 56.25%
   token density the reference metric is exactly unchanged, runs 1.66x faster
   and reduces estimated metric workspace by at least 15.8x.
+- Judge verdict caches now support atomic bulk reads/writes and deduplicate
+  identical misses in `JudgeCascade.judge_many`. For 104 local verdicts on the
+  reference Mac, batched durable writes are 22.3x faster and the complete
+  cascade/cache path is 8.5x faster; external judge latency remains dominant
+  when a model call is required.
 
 ### Fixed
 
+- Judge-cache rows are now immutable: identical replays are idempotent, while
+  conflicting concurrent verdicts, malformed JSON and non-finite payloads fail
+  closed. Task-specific success is included in cache identity so a success
+  verdict cannot leak into the same prompt/response judged without that signal.
 - New v3 GGUF plans now use a canonical projection reduction, making edited
   payload bytes independent of streaming chunk size. Historical v2 and Q8 v1
   plans retain their old arithmetic for exact

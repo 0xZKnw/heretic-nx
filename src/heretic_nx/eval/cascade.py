@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
 from typing import Literal
 
@@ -28,6 +28,15 @@ class JudgeVerdict:
 
 
 JudgeFunction = Callable[[str, str, str], JudgeVerdict]
+
+
+@dataclass(frozen=True)
+class JudgeInput:
+    """One independently cacheable input to :meth:`JudgeCascade.judge_many`."""
+
+    prompt: str
+    response: str
+    task_success: bool | None = None
 
 
 def surface_verdict(response: str, *, task_success: bool | None = None) -> JudgeVerdict:
@@ -81,12 +90,33 @@ class JudgeCascade:
         *,
         task_success: bool | None = None,
     ) -> JudgeVerdict:
-        key = judge_cache_key(prompt, response, self.rubric)
+        key = judge_cache_key(
+            prompt,
+            response,
+            self.rubric,
+            task_success=task_success,
+        )
         if self.cache is not None:
             cached = self.cache.get(key)
             if cached is not None:
                 return JudgeVerdict(**cached, cached=True)
 
+        verdict = self._judge_uncached(
+            prompt,
+            response,
+            task_success=task_success,
+        )
+        if self.cache is not None:
+            self.cache.put(key, self._cache_payload(verdict))
+        return verdict
+
+    def _judge_uncached(
+        self,
+        prompt: str,
+        response: str,
+        *,
+        task_success: bool | None,
+    ) -> JudgeVerdict:
         verdict = surface_verdict(response, task_success=task_success)
         if verdict.label == "ambiguous" and self.j1 is not None:
             candidate = self.j1(prompt, response, self.rubric)
@@ -103,8 +133,54 @@ class JudgeCascade:
                 "J3-required",
                 rationale="fast judges abstained",
             )
-        if self.cache is not None:
-            payload = asdict(verdict)
-            payload.pop("cached", None)
-            self.cache.put(key, payload)
         return verdict
+
+    @staticmethod
+    def _cache_payload(verdict: JudgeVerdict) -> dict[str, object]:
+        payload = asdict(verdict)
+        payload.pop("cached", None)
+        return payload
+
+    def judge_many(self, inputs: Iterable[JudgeInput]) -> list[JudgeVerdict]:
+        """Judge a collection using bulk reads and one atomic cache commit.
+
+        Existing cache hits remain marked ``cached=True``. Duplicate misses in
+        the same call are evaluated only once but remain ``cached=False``: they
+        were computed during this batch rather than replayed from durable state.
+        """
+
+        items = tuple(inputs)
+        keys = tuple(
+            judge_cache_key(
+                item.prompt,
+                item.response,
+                self.rubric,
+                task_success=item.task_success,
+            )
+            for item in items
+        )
+        cached = self.cache.get_many(keys) if self.cache is not None else {}
+        computed: dict[str, JudgeVerdict] = {}
+        results: list[JudgeVerdict] = []
+
+        for key, item in zip(keys, items, strict=True):
+            payload = cached.get(key)
+            if payload is not None:
+                results.append(JudgeVerdict(**payload, cached=True))
+                continue
+            verdict = computed.get(key)
+            if verdict is None:
+                verdict = self._judge_uncached(
+                    item.prompt,
+                    item.response,
+                    task_success=item.task_success,
+                )
+                computed[key] = verdict
+            results.append(verdict)
+
+        if self.cache is not None:
+            self.cache.put_many(
+                (key, self._cache_payload(verdict))
+                for key, verdict in computed.items()
+            )
+        return results

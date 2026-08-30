@@ -1,4 +1,4 @@
-from .cascade import JudgeCascade, JudgeVerdict
+from .cascade import JudgeCascade, JudgeInput, JudgeVerdict
 from .capability import (
     ArtifactCapabilitySet,
     CapabilityCertificate,
@@ -49,6 +49,7 @@ __all__ = [
     "FunnelProtocol",
     "FunnelStage",
     "JudgeCascade",
+    "JudgeInput",
     "JudgeVerdict",
     "GateEvidence",
     "PrimePromotionResult",
