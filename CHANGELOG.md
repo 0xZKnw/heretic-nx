@@ -6,6 +6,11 @@ All notable public changes to Heretic NX are documented here.
 
 ### Added
 
+- A model-neutral native llama.cpp raw-logit collector now writes complete
+  full-vocabulary float32 matrices without JSON transport. Collection binds
+  simple or split GGUF inputs, token rows, tokenizer assets and the actual
+  mapped llama/ggml runtime closure to an atomic no-clobber artifact; nonzero
+  GPU offload requests fail closed when the pinned backend cannot honor them.
 - Transactional mixed-GGUF editing for Q2_K through Q6_K plus common legacy
   quants, backed by llama.cpp's native same-type codecs.
 - Quantization-aware min-drift block selection, optional strength candidates,
@@ -74,6 +79,11 @@ All notable public changes to Heretic NX are documented here.
 
 ### Performance
 
+- Native binary raw-logit collection replaces the full-vocabulary HTTP/JSON
+  path without changing logits. On the retained 104-prompt Ling Q8 fixture,
+  the matched historical path takes 29.95 s versus 19.25 s natively (1.56x),
+  and the resulting matrix remains bit-identical at SHA-256 `67960fea…`.
+  This is an end-to-end fixture measurement, not a universal 4x claim.
 - Strength-sweep candidates now complete independent full-file, payload and
   untouched-region integrity hashing concurrently, with deterministic report
   order and publication still held behind the all-candidate validation barrier.
@@ -164,6 +174,12 @@ All notable public changes to Heretic NX are documented here.
 
 ### Fixed
 
+- Native KL cache reuse now revalidates model shards, tokenizer inventory,
+  token rows, runtime libraries, collector protocol and output inode before
+  accepting an existing artifact. Concurrent replacement, partial output and
+  escaped llama/ggml modules fail closed without clobbering foreign files. The
+  C++ writer never unlinks a pathname on failure; orchestration confines any
+  abandoned partial to its private temporary directory instead.
 - Judge-cache rows are now immutable: identical replays are idempotent, while
   conflicting concurrent verdicts, malformed JSON and non-finite payloads fail
   closed. Task-specific success is included in cache identity so a success

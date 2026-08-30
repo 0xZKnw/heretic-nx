@@ -296,6 +296,35 @@ collection, and records the runtime build/type in each checkpoint. Comparisons
 reject identical base/candidate bytes, mismatched runtime builds, different
 quantization types, incomplete matrices and unnormalized rows.
 
+The faster native raw-logit collector uses the pinned llama.cpp revision
+`d7bd3bfcad3e29c7e49fd26f38c79ee3e9a3fd6b`. Check out that exact clean
+revision under `references/llama.cpp`, then build the collector and its shared
+runtime together:
+
+```bash
+scripts/build_native_logits.sh
+```
+
+The recipe writes `build/llama.cpp-native/bin/llama_raw_logits`, uses
+`@loader_path` on macOS or `$ORIGIN` on Linux, and treats the adjacent shared
+libraries as one attested runtime bundle. It enables Metal on macOS with the
+metallib embedded in the attested `libggml-metal` module, and uses the portable
+CPU backend on Linux. Native collection inventories the
+modules actually mapped by the process and fails closed unless its llama/ggml
+modules resolve to those pinned bytes. A nonzero `--gpu-layers` request also
+fails closed when the loaded backend reports no GPU-offload support. The
+collector is model-neutral for GGUF architectures supported by the pinned
+llama.cpp revision; LFM and Ling are retained regression runners, not special
+cases in the core. Their KL runners use this location by default;
+`--executable` and repeatable `--runtime-dir` remain available for an
+equivalently pinned custom build.
+
+The standalone C++ collector deliberately never unlinks an output pathname on
+failure, avoiding cleanup races with a concurrently replaced file. The Python
+orchestrator runs it inside a private temporary directory and publishes the
+data plus manifest only after complete validation, so failed Heretic NX runs
+still expose no partial destination.
+
 The optimizer/backend microbenchmark is reproducible with:
 
 ```powershell

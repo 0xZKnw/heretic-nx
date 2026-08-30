@@ -36,6 +36,12 @@ from .kl_integrity import (
     require_distinct_artifacts,
     require_matching_runtime_protocol,
 )
+from .native_logits import (
+    NativeRawLogitsResult,
+    attest_tokenizer_assets,
+    collect_native_raw_logits,
+    require_tokenizer_identity,
+)
 from .promotion import GateEvidence, PrimePromotionResult, derive_prime_claim
 from .response_artifact import ResponseRecord, write_response_artifact
 from .sequential import AnytimeBernoulliCS, SequentialDecision, clopper_pearson_zero_upper
@@ -77,6 +83,7 @@ __all__ = [
     "PortfolioETA",
     "KLObservation",
     "NativeRuntimeClient",
+    "NativeRawLogitsResult",
     "PublicReportObservation",
     "RefusalObservation",
     "ResponseRecord",
@@ -95,9 +102,11 @@ __all__ = [
     "VerdictSource",
     "aggregate_benign_metrics",
     "attest_native_model",
+    "attest_tokenizer_assets",
     "certify_capability_preservation",
     "certify_artifact_set",
     "clopper_pearson_zero_upper",
+    "collect_native_raw_logits",
     "derive_prime_claim",
     "estimate_portfolio_eta",
     "execute_refusal_first_wave",
@@ -108,6 +117,7 @@ __all__ = [
     "require_distinct_artifacts",
     "require_matching_runtime_protocol",
     "require_native_model_identity",
+    "require_tokenizer_identity",
     "sequence_drift_between_models",
     "teacher_forced_sequence_kl",
     "write_response_artifact",
