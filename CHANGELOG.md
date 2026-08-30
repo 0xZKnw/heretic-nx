@@ -21,6 +21,9 @@ All notable public changes to Heretic NX are documented here.
   snapshot-bound source/factor/plan verification.
 - Refusal-cap early termination for frontier screening, while keeping full
   104-row reports mandatory before KL certification.
+- Content-addressed refusal-first evaluation scheduling with immutable replay
+  cache, group-aware split isolation, semantic-versus-lexical verdict separation,
+  exact partial-KL pruning and a matched-protocol refusal/KL Pareto frontier.
 - Direct, bounded-memory Q8_0 GGUF static merging with hash-bound ablation
   plans, row-norm preservation, atomic output replacement and stacked MoE
   expert-bank support.

@@ -259,6 +259,14 @@ soon as the seventh marker is observed; such partial reports are explicitly
 non-certifying. Re-run survivors without the cap for the complete 104-row
 report, then compute KL only for those full-report survivors.
 
+For programmatic searches, `EvaluationFunnel` makes that order fail-closed. It
+content-addresses the artifact, runtime, tokenizer, template, evaluator rules
+and three group-disjoint splits; requires a complete semantic refusal verdict
+before KL; prunes KL only when its non-negative lower bound has already crossed
+the cap; and permits public-test reporting only after the capability gate.
+Lexical marker hits remain a separately reported proxy and never become a
+semantic refusal verdict by themselves.
+
 KL collection now takes the GGUF path with `--artifact`, attests the running
 llama.cpp server through `/props`, hashes the local artifact before and after
 collection, and records the runtime build/type in each checkpoint. Comparisons
