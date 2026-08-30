@@ -8,13 +8,24 @@ from pathlib import Path
 
 from gguf import GGUFReader
 from gguf.quants import dequantize
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 import torch
 
 from experiments.lfm25_8b_a1b_q8_build import RUN_DIR, SOURCE
+from experiments.lfm25_8b_a1b_q8_prime_build import (
+    RANKING_REPORT,
+    load_verified_prime_merge,
+)
 from experiments.lfm25_8b_a1b_teacher_inputs import OUTPUT as INPUTS
+from experiments.lfm25_8b_a1b_teacher_inputs import MANIFEST as INPUT_MANIFEST
 from experiments.lfm25_8b_a1b_teacher_inputs import TEACHER_MERGE
-from heretic_nx.hashing import canonical_json, sha256_file
+from heretic_nx.hashing import (
+    canonical_json,
+    sha256_directory,
+    sha256_file,
+    sha256_json,
+)
 
 
 OPERATORS = RUN_DIR / "prime-site-operators.safetensors"
@@ -84,11 +95,69 @@ def correlation(left: torch.Tensor, right: torch.Tensor) -> float:
 
 
 def main() -> None:
-    required = (SOURCE, INPUTS, OPERATORS, TEACHER_MERGE)
+    required = (SOURCE, INPUTS, INPUT_MANIFEST, OPERATORS, TEACHER_MERGE)
     if not all(path.is_file() for path in required):
         raise RuntimeError("the base Q8, teacher inputs, or PRIME factors are missing")
-    teacher = json.loads(TEACHER_MERGE.read_text(encoding="utf-8"))
+    input_manifest = json.loads(INPUT_MANIFEST.read_text(encoding="utf-8"))
+    if input_manifest.get("schema_version") != "lfm25-8b-a1b-teacher-op-inputs-v3":
+        raise RuntimeError(
+            "teacher inputs predate the leak-safe train/validation protocol"
+        )
+    input_output_sha256 = input_manifest.pop("output_sha256", None)
+    input_manifest_sha256 = input_manifest.pop("manifest_sha256", None)
+    if input_manifest_sha256 != sha256_json(input_manifest):
+        raise RuntimeError("teacher input manifest hash mismatch")
+    if input_output_sha256 != sha256_file(INPUTS):
+        raise RuntimeError("teacher input tensor artifact hash mismatch")
+    with safe_open(INPUTS, framework="pt", device="cpu") as source:
+        input_metadata = source.metadata() or {}
+        input_keys = set(source.keys())
+    if input_keys != {"safe", "harmful"}:
+        raise RuntimeError("teacher input tensor keys are invalid")
+    teacher, ranking = load_verified_prime_merge(
+        TEACHER_MERGE,
+        verify_output=True,
+    )
     sites = list(teacher["candidate"]["selected"])
+    site_ids = [str(row["site_id"]) for row in sites]
+    selected_sites_sha256 = sha256_json(sites)
+    current_bindings = {
+        "manifest_sha256": input_manifest_sha256,
+        "teacher_merge_sha256": sha256_file(TEACHER_MERGE),
+        "ranking_report_sha256": sha256_file(RANKING_REPORT),
+        "operators_sha256": sha256_file(OPERATORS),
+        "source_artifact_sha256": str(teacher["source"]["sha256"]),
+        "teacher_artifact_sha256": str(teacher["output"]["sha256"]),
+        "selected_sites_sha256": selected_sites_sha256,
+    }
+    if any(input_metadata.get(key) != value for key, value in current_bindings.items()):
+        raise RuntimeError("teacher input tensors and manifest disagree")
+    geometry_provenance = ranking["geometry_provenance"]
+    model_path = Path(str(input_manifest.get("model", "")))
+    if (
+        len(sites) != 8
+        or input_manifest.get("site_ids") != site_ids
+        or input_manifest.get("selected_sites_sha256") != selected_sites_sha256
+        or input_manifest.get("teacher_merge_sha256")
+        != current_bindings["teacher_merge_sha256"]
+        or input_manifest.get("ranking_report_sha256")
+        != current_bindings["ranking_report_sha256"]
+        or input_manifest.get("operator_artifact_sha256")
+        != current_bindings["operators_sha256"]
+        or input_manifest.get("source_artifact_sha256")
+        != current_bindings["source_artifact_sha256"]
+        or input_manifest.get("teacher_artifact_sha256")
+        != current_bindings["teacher_artifact_sha256"]
+        or input_manifest.get("geometry_provenance_sha256")
+        != sha256_json(geometry_provenance)
+        or model_path.resolve()
+        != Path(str(geometry_provenance["model"])).resolve()
+        or not model_path.is_dir()
+        or input_manifest.get("model_sha256") != sha256_directory(model_path)
+        or input_manifest.get("model_sha256")
+        != geometry_provenance["model_sha256"]
+    ):
+        raise RuntimeError("teacher inputs are cross-wired to stale provenance")
     if len(sites) != 8:
         raise RuntimeError("the distillation teacher must contain eight sites")
     inputs = load_file(INPUTS)
@@ -98,6 +167,11 @@ def main() -> None:
         raise RuntimeError(f"invalid safe teacher inputs: {safe_all.shape}")
     if harmful_all.shape[1:] != (len(sites), 2048):
         raise RuntimeError(f"invalid harmful teacher inputs: {harmful_all.shape}")
+    if (
+        safe_all.shape[0] != input_manifest.get("safe_count")
+        or harmful_all.shape[0] != input_manifest.get("harmful_response_tokens")
+    ):
+        raise RuntimeError("teacher input tensor counts and manifest disagree")
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     operator_factors = load_file(OPERATORS)
@@ -105,16 +179,24 @@ def main() -> None:
     q8_tensors = {tensor.name: tensor for tensor in reader.tensors}
     payload: dict[str, torch.Tensor] = {}
     diagnostics: dict[str, object] = {
-        "schema_version": "lfm25-8b-a1b-teacher-op-distillation-v1",
+        "schema_version": "lfm25-8b-a1b-teacher-op-distillation-v3",
         "teacher": {
             "merge": str(TEACHER_MERGE),
             "merge_sha256": sha256_file(TEACHER_MERGE),
             "beta": teacher["candidate"]["beta"],
-            "sites": [row["site_id"] for row in sites],
+            "source_artifact_sha256": current_bindings["source_artifact_sha256"],
+            "artifact_sha256": current_bindings["teacher_artifact_sha256"],
+            "operators_sha256": current_bindings["operators_sha256"],
+            "ranking_report_sha256": current_bindings["ranking_report_sha256"],
+            "geometry_provenance_sha256": sha256_json(geometry_provenance),
+            "selected_sites_sha256": selected_sites_sha256,
+            "sites": site_ids,
         },
         "inputs": {
             "path": str(INPUTS),
             "sha256": sha256_file(INPUTS),
+            "manifest": str(INPUT_MANIFEST),
+            "manifest_sha256": input_manifest_sha256,
             "safe_shape": list(safe_all.shape),
             "harmful_shape": list(harmful_all.shape),
         },
@@ -183,7 +265,13 @@ def main() -> None:
         OUTPUT,
         metadata={
             "inputs_sha256": sha256_file(INPUTS),
+            "inputs_manifest_sha256": str(input_manifest_sha256),
             "operators_sha256": sha256_file(OPERATORS),
+            "teacher_merge_sha256": sha256_file(TEACHER_MERGE),
+            "ranking_report_sha256": sha256_file(RANKING_REPORT),
+            "source_artifact_sha256": str(teacher["source"]["sha256"]),
+            "teacher_artifact_sha256": str(teacher["output"]["sha256"]),
+            "selected_sites_sha256": selected_sites_sha256,
         },
     )
     diagnostics["output"] = {"path": str(OUTPUT), "sha256": sha256_file(OUTPUT)}

@@ -7,9 +7,17 @@ import json
 import math
 from pathlib import Path
 
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 import torch
 
+from experiments.lfm25_2p6b_residual_stream import (
+    BAD_DATASET,
+    BAD_REVISION,
+    GOOD_DATASET,
+    GOOD_REVISION,
+)
+from heretic_nx.data.research_splits import ResearchSplitManifest
 from heretic_nx.edits.activation_op import metric_projector_operator
 from heretic_nx.geometry.consensus import grassmann_consensus
 from heretic_nx.geometry.metric import (
@@ -18,7 +26,12 @@ from heretic_nx.geometry.metric import (
     require_static_geometry,
 )
 from heretic_nx.geometry.pca import exact_principal_components
-from heretic_nx.hashing import canonical_json, sha256_file
+from heretic_nx.hashing import (
+    canonical_json,
+    sha256_directory,
+    sha256_file,
+    sha256_json,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,16 +43,110 @@ REPORT = RUN_DIR / "prime-site-operators.json"
 FOLDS = 3
 CAPABILITY_RANK = 8
 REGULARIZATION = 1e-3
+_RUNTIME_PROGRESS_KEYS = frozenset(
+    {"label", "completed", "seconds", "complete", "output_sha256"}
+)
+
+
+def load_activation_provenance() -> tuple[dict[str, object], dict[str, object]]:
+    """Validate the complete v2 activation cache before fitting operators."""
+
+    progress = json.loads(PROGRESS.read_text(encoding="utf-8"))
+    if progress.get("schema_version") != "lfm25-8b-a1b-mlx-sites-progress-v2":
+        raise RuntimeError("semantic activations predate leak-safe geometry splits")
+    if (
+        progress.get("complete") is not True
+        or progress.get("label") != "target"
+        or progress.get("completed") != progress.get("count")
+    ):
+        raise RuntimeError("semantic activation collection is incomplete")
+    immutable = {
+        key: value
+        for key, value in progress.items()
+        if key not in _RUNTIME_PROGRESS_KEYS
+    }
+    immutable_sha256 = sha256_json(immutable)
+    if progress.get("output_sha256") != sha256_file(ACTIVATIONS):
+        raise RuntimeError("semantic activation artifact hash mismatch")
+
+    safe_manifest = ResearchSplitManifest.from_dict(
+        progress["safe_split_manifest"]
+    )
+    target_manifest = ResearchSplitManifest.from_dict(
+        progress["target_split_manifest"]
+    )
+    count = progress.get("count")
+    pool_count = progress.get("pool_count")
+    split_seed = progress.get("split_seed")
+    if (
+        safe_manifest.sha256 != progress.get("safe_split_manifest_sha256")
+        or target_manifest.sha256
+        != progress.get("target_split_manifest_sha256")
+        or safe_manifest.purpose != "geometry"
+        or target_manifest.purpose != "geometry"
+        or safe_manifest.dataset_id != GOOD_DATASET
+        or safe_manifest.revision != GOOD_REVISION
+        or target_manifest.dataset_id != BAD_DATASET
+        or target_manifest.revision != BAD_REVISION
+        or safe_manifest.source_split != "train"
+        or target_manifest.source_split != "train"
+        or safe_manifest.seed != split_seed
+        or target_manifest.seed != split_seed
+        or safe_manifest.pool_size != pool_count
+        or target_manifest.pool_size != pool_count
+        or len(safe_manifest.rows) != count
+        or len(target_manifest.rows) != count
+    ):
+        raise RuntimeError("semantic activation split provenance is inconsistent")
+
+    model = Path(str(progress["model"]))
+    source = Path(str(progress["source"]))
+    if (
+        not model.is_dir()
+        or progress.get("model_sha256") != sha256_directory(model)
+        or not source.is_file()
+        or progress.get("source_sha256") != sha256_file(source)
+    ):
+        raise RuntimeError("semantic activation model provenance is stale")
+
+    with safe_open(ACTIVATIONS, framework="pt", device="cpu") as handle:
+        metadata = handle.metadata() or {}
+    required_metadata = {
+        "manifest_sha256": immutable_sha256,
+        "sites_sha256": str(progress["sites_sha256"]),
+        "safe_split_manifest_sha256": safe_manifest.sha256,
+        "target_split_manifest_sha256": target_manifest.sha256,
+        "model_sha256": str(progress["model_sha256"]),
+        "source_sha256": str(progress["source_sha256"]),
+    }
+    if any(metadata.get(key) != value for key, value in required_metadata.items()):
+        raise RuntimeError("semantic activation tensors and manifest disagree")
+    if progress.get("sites_sha256") != sha256_json(progress.get("sites")):
+        raise RuntimeError("semantic site manifest hash mismatch")
+    return progress, {
+        "activation_manifest_sha256": immutable_sha256,
+        "safe_split_manifest": safe_manifest.to_dict(),
+        "safe_split_manifest_sha256": safe_manifest.sha256,
+        "target_split_manifest": target_manifest.to_dict(),
+        "target_split_manifest_sha256": target_manifest.sha256,
+        "model": str(model.resolve()),
+        "model_sha256": str(progress["model_sha256"]),
+        "source": str(source.resolve()),
+        "source_sha256": str(progress["source_sha256"]),
+        "sites_sha256": str(progress["sites_sha256"]),
+    }
 
 
 def main() -> None:
-    manifest = json.loads(PROGRESS.read_text(encoding="utf-8"))
+    manifest, provenance = load_activation_provenance()
     specs = list(manifest["sites"])
     cached = load_file(ACTIVATIONS)
     safe = cached["safe"].float()
     target = cached["target"].float()
     if safe.shape != target.shape or safe.shape[1] != len(specs):
         raise RuntimeError("semantic activation cache and site manifest disagree")
+    if safe.shape[0] != manifest["count"] or safe.shape[2] != manifest["width"]:
+        raise RuntimeError("semantic activation cache has an invalid shape")
 
     gate = MetricGeometryGate()
     tensors = {}
@@ -152,10 +259,23 @@ def main() -> None:
     save_file(
         tensors,
         OUTPUT,
-        metadata={"activations_sha256": sha256_file(ACTIVATIONS)},
+        metadata={
+            "activations_sha256": sha256_file(ACTIVATIONS),
+            "activation_manifest_sha256": str(
+                provenance["activation_manifest_sha256"]
+            ),
+            "safe_split_manifest_sha256": str(
+                provenance["safe_split_manifest_sha256"]
+            ),
+            "target_split_manifest_sha256": str(
+                provenance["target_split_manifest_sha256"]
+            ),
+            "source_sha256": str(provenance["source_sha256"]),
+            "sites_sha256": str(provenance["sites_sha256"]),
+        },
     )
     report = {
-        "schema_version": "lfm25-8b-a1b-prime-sites-v1",
+        "schema_version": "lfm25-8b-a1b-prime-sites-v2",
         "method": {
             "folds": FOLDS,
             "capability_rank": CAPABILITY_RANK,
@@ -166,10 +286,15 @@ def main() -> None:
             "path": str(ACTIVATIONS),
             "sha256": sha256_file(ACTIVATIONS),
             "shape": list(safe.shape),
+            "manifest_sha256": provenance["activation_manifest_sha256"],
         },
+        "geometry_provenance": provenance,
         "accepted": accepted,
         "rejected": rejected,
-        "operator_artifact": str(OUTPUT),
+        "operator_artifact": {
+            "path": str(OUTPUT),
+            "sha256": sha256_file(OUTPUT),
+        },
     }
     REPORT.write_bytes(canonical_json(report) + b"\n")
     print(

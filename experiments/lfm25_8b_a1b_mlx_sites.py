@@ -24,7 +24,17 @@ from experiments.lfm25_2p6b_residual_stream import (
     GOOD_REVISION,
     render,
 )
-from heretic_nx.hashing import canonical_json, sha256_json
+from experiments.lfm25_8b_a1b_q8_build import SOURCE
+from heretic_nx.data.research_splits import (
+    build_research_split,
+    verify_manifest_texts,
+)
+from heretic_nx.hashing import (
+    canonical_json,
+    sha256_directory,
+    sha256_file,
+    sha256_json,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +46,8 @@ PROGRESS = RUN_DIR / "mlx-site-activations.progress.json"
 SAFE_ARRAY = RUN_DIR / "mlx-site-activations.safe.npy"
 TARGET_ARRAY = RUN_DIR / "mlx-site-activations.target.npy"
 COUNT = 400
+POOL_COUNT = 1024
+SPLIT_SEED = 20260830
 LAYERS = 24
 SITES = 48
 WIDTH = 2048
@@ -123,12 +135,19 @@ def encode_rows(tokenizer: object, values: list[str]) -> list[list[int]]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=Path, default=MODEL_PATH)
+    parser.add_argument("--source", type=Path, default=SOURCE)
     parser.add_argument("--count", type=int, default=COUNT)
+    parser.add_argument("--pool-count", type=int, default=POOL_COUNT)
+    parser.add_argument("--split-seed", type=int, default=SPLIT_SEED)
     args = parser.parse_args()
     if not 1 <= args.count <= COUNT:
         raise ValueError(f"count must be between 1 and {COUNT}")
     if not args.model.is_dir():
         raise RuntimeError(f"MLX teacher is missing: {args.model}")
+    if args.pool_count < args.count:
+        raise ValueError("pool-count must be at least count")
+    if not args.source.is_file():
+        raise RuntimeError(f"target Q8 source is missing: {args.source}")
 
     config = json.loads((args.model / "config.json").read_text(encoding="utf-8"))
     specs = site_specs([str(value) for value in config["layer_types"]])
@@ -136,22 +155,42 @@ def main() -> None:
     safe_rows = load_dataset(
         GOOD_DATASET,
         revision=GOOD_REVISION,
-        split=f"train[:{args.count}]",
+        split=f"train[:{args.pool_count}]",
     )
     target_rows = load_dataset(
         BAD_DATASET,
         revision=BAD_REVISION,
-        split=f"train[:{args.count}]",
+        split=f"train[:{args.pool_count}]",
+    )
+    safe_pool = [str(row["text"]) for row in safe_rows]
+    target_pool = [str(row["text"]) for row in target_rows]
+    safe_manifest = build_research_split(
+        safe_pool,
+        purpose="geometry",
+        dataset_id=GOOD_DATASET,
+        revision=GOOD_REVISION,
+        source_split="train",
+        seed=args.split_seed,
+        count=args.count,
+    )
+    target_manifest = build_research_split(
+        target_pool,
+        purpose="geometry",
+        dataset_id=BAD_DATASET,
+        revision=BAD_REVISION,
+        source_split="train",
+        seed=args.split_seed,
+        count=args.count,
     )
     prompts = {
         "safe": render(
             tokenizer,
-            [str(row["text"]) for row in safe_rows],
+            verify_manifest_texts(safe_manifest, safe_pool),
             close_think=False,
         ),
         "target": render(
             tokenizer,
-            [str(row["text"]) for row in target_rows],
+            verify_manifest_texts(target_manifest, target_pool),
             close_think=False,
         ),
     }
@@ -159,22 +198,71 @@ def main() -> None:
         label: encode_rows(tokenizer, values) for label, values in prompts.items()
     }
     expected = {
-        "schema_version": "lfm25-8b-a1b-mlx-sites-progress-v1",
+        "schema_version": "lfm25-8b-a1b-mlx-sites-progress-v2",
         "model": str(args.model.resolve()),
+        "model_sha256": sha256_directory(args.model),
+        "source": str(args.source.resolve()),
+        "source_sha256": sha256_file(args.source),
         "count": args.count,
+        "pool_count": args.pool_count,
+        "split_seed": args.split_seed,
         "sites": specs,
+        "sites_sha256": sha256_json(specs),
         "width": WIDTH,
         "max_length": MAX_LENGTH,
         "close_think": False,
+        "safe_split_manifest": safe_manifest.to_dict(),
+        "safe_split_manifest_sha256": safe_manifest.sha256,
+        "target_split_manifest": target_manifest.to_dict(),
+        "target_split_manifest_sha256": target_manifest.sha256,
         "safe_tokens_sha256": sha256_json(token_rows["safe"]),
         "target_tokens_sha256": sha256_json(token_rows["target"]),
     }
-    progress = {**expected, "label": "safe", "completed": 0, "seconds": 0.0}
+    progress = {
+        **expected,
+        "label": "safe",
+        "completed": 0,
+        "seconds": 0.0,
+        "complete": False,
+        "output_sha256": None,
+    }
     mode = "w+"
     if PROGRESS.is_file():
         loaded = json.loads(PROGRESS.read_text(encoding="utf-8"))
         if not all(loaded.get(key) == value for key, value in expected.items()):
             raise RuntimeError(f"stale site checkpoint: {PROGRESS}")
+        label = loaded.get("label")
+        completed = loaded.get("completed")
+        if (
+            label not in {"safe", "target"}
+            or isinstance(completed, bool)
+            or not isinstance(completed, int)
+            or not 0 <= completed <= args.count
+            or not isinstance(loaded.get("complete"), bool)
+        ):
+            raise RuntimeError(f"invalid site checkpoint: {PROGRESS}")
+        if loaded["complete"]:
+            if (
+                label != "target"
+                or completed != args.count
+                or not OUTPUT.is_file()
+                or loaded.get("output_sha256") != sha256_file(OUTPUT)
+            ):
+                raise RuntimeError(f"corrupt completed site checkpoint: {PROGRESS}")
+            print(
+                json.dumps(
+                    {
+                        "output": str(OUTPUT),
+                        "output_sha256": loaded["output_sha256"],
+                        "reused": True,
+                    },
+                    indent=2,
+                ),
+                flush=True,
+            )
+            return
+        if loaded.get("output_sha256") is not None:
+            raise RuntimeError(f"partial site checkpoint claims an output: {PROGRESS}")
         progress = loaded
         mode = "r+"
     safe = np.lib.format.open_memmap(
@@ -231,8 +319,17 @@ def main() -> None:
         metadata={
             "manifest_sha256": sha256_json(expected),
             "sites_sha256": sha256_json(specs),
+            "safe_split_manifest_sha256": safe_manifest.sha256,
+            "target_split_manifest_sha256": target_manifest.sha256,
+            "model_sha256": str(expected["model_sha256"]),
+            "source_sha256": str(expected["source_sha256"]),
         },
     )
+    progress["label"] = "target"
+    progress["completed"] = args.count
+    progress["complete"] = True
+    progress["output_sha256"] = sha256_file(OUTPUT)
+    write_json(PROGRESS, progress)
     print(
         json.dumps(
             {
