@@ -41,6 +41,12 @@ QUANT_LAYOUTS: dict[str, QuantLayout] = {
 
 DEFAULT_PARALLEL_MIN_ELEMENTS = 65_536
 MAX_AUTO_QUANTIZATION_THREADS = 8
+# Native dequantization is far cheaper per element than quantization.  Giving
+# every worker at least 2 MiB of float32 output avoids turning small streaming
+# chunks into thread-pool overhead while still scaling large row batches.
+MIN_DEQUANTIZATION_ELEMENTS_PER_WORKER = 524_288
+MAX_LIGHTWEIGHT_QUANTIZATION_THREADS = 4
+LIGHTWEIGHT_EIGHT_THREAD_MIN_ELEMENTS = 4_194_304
 
 
 def _available_cpu_count() -> int:
@@ -283,11 +289,42 @@ class NativeGGMLCodec:
         self.validate_payload(payload, qtype)
         output = np.empty((payload.shape[0], input_dim), dtype=np.float32)
         dequantize = getattr(self._library, f"dequantize_row_{layout.native_suffix}")
-        dequantize(
-            payload.ctypes.data_as(ctypes.c_void_p),
-            output.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-            output.size,
+
+        def dequantize_range(start: int, stop: int) -> None:
+            source_rows = payload[start:stop]
+            output_rows = output[start:stop]
+            dequantize(
+                source_rows.ctypes.data_as(ctypes.c_void_p),
+                output_rows.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                output_rows.size,
+            )
+
+        useful_dequantization_workers = max(
+            1,
+            output.size // MIN_DEQUANTIZATION_ELEMENTS_PER_WORKER,
         )
+        worker_count = min(
+            self.quantization_threads,
+            payload.shape[0],
+            useful_dequantization_workers,
+        )
+        if worker_count == 1:
+            dequantize_range(0, payload.shape[0])
+        else:
+            rows_per_worker, remainder = divmod(payload.shape[0], worker_count)
+            ranges = []
+            start = 0
+            for worker_index in range(worker_count):
+                stop = start + rows_per_worker + int(worker_index < remainder)
+                ranges.append((start, stop))
+                start = stop
+            executor = self._get_executor()
+            futures = [
+                executor.submit(dequantize_range, start, stop)
+                for start, stop in ranges
+            ]
+            for future in futures:
+                future.result()
         if not np.isfinite(output).all():
             raise RuntimeError(f"native {qtype.name} dequantization produced non-finite values")
         return output
@@ -321,8 +358,17 @@ class NativeGGMLCodec:
                     f"expected {output_rows.nbytes}"
                 )
 
+        useful_quantization_threads = self.quantization_threads
+        if (
+            not layout.requires_native
+            and matrix.size < LIGHTWEIGHT_EIGHT_THREAD_MIN_ELEMENTS
+        ):
+            useful_quantization_threads = min(
+                useful_quantization_threads,
+                MAX_LIGHTWEIGHT_QUANTIZATION_THREADS,
+            )
         worker_count = (
-            min(self.quantization_threads, matrix.shape[0])
+            min(useful_quantization_threads, matrix.shape[0])
             if self.quantization_threads > 1
             and matrix.size >= self.parallel_min_elements
             else 1

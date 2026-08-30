@@ -36,6 +36,25 @@ def median_quantization(
     return statistics.median(timings), result
 
 
+def median_dequantization(
+    codec: GGUFQuantizationCodecRegistry,
+    encoded: np.ndarray,
+    qtype: object,
+    *,
+    input_dim: int,
+    repeats: int,
+) -> tuple[float, np.ndarray]:
+    codec.dequantize_rows(encoded, qtype, input_dim)
+    timings = []
+    result = None
+    for _ in range(repeats):
+        started = time.perf_counter()
+        result = codec.dequantize_rows(encoded, qtype, input_dim)
+        timings.append(time.perf_counter() - started)
+    assert result is not None
+    return statistics.median(timings), result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rows", type=int, default=1024)
@@ -74,7 +93,7 @@ def main() -> None:
         dtype=np.float32,
     )
     report: dict[str, object] = {
-        "schema_version": "heretic-nx-gguf-codec-parallel-benchmark-v1",
+        "schema_version": "heretic-nx-gguf-codec-parallel-benchmark-v2",
         "environment": {
             "platform": platform.platform(),
             "python": platform.python_version(),
@@ -98,6 +117,13 @@ def main() -> None:
             serial_seconds, reference = median_quantization(
                 serial, values, qtype, repeats=args.repeats
             )
+            serial_dequant_seconds, reference_dequantized = median_dequantization(
+                serial,
+                reference,
+                qtype,
+                input_dim=args.input_dim,
+                repeats=args.repeats,
+            )
             rows: list[dict[str, object]] = []
             for threads in args.threads:
                 with GGUFQuantizationCodecRegistry(
@@ -108,20 +134,44 @@ def main() -> None:
                     parallel_seconds, candidate = median_quantization(
                         parallel, values, qtype, repeats=args.repeats
                     )
+                    parallel_dequant_seconds, candidate_dequantized = (
+                        median_dequantization(
+                            parallel,
+                            candidate,
+                            qtype,
+                            input_dim=args.input_dim,
+                            repeats=args.repeats,
+                        )
+                    )
                 rows.append(
                     {
                         "threads": threads,
-                        "median_seconds": parallel_seconds,
-                        "speedup": serial_seconds / parallel_seconds,
-                        "bit_identical": bool(np.array_equal(reference, candidate)),
+                        "quantization": {
+                            "median_seconds": parallel_seconds,
+                            "speedup": serial_seconds / parallel_seconds,
+                            "bit_identical": bool(np.array_equal(reference, candidate)),
+                        },
+                        "dequantization": {
+                            "median_seconds": parallel_dequant_seconds,
+                            "speedup": (
+                                serial_dequant_seconds / parallel_dequant_seconds
+                            ),
+                            "bit_identical": bool(
+                                np.array_equal(
+                                    reference_dequantized,
+                                    candidate_dequantized,
+                                )
+                            ),
+                        },
                     }
                 )
             measurements.append(
                 {
                     "quantization": name,
-                    "serial_median_seconds": serial_seconds,
                     "encoded_bytes": reference.nbytes,
                     "output_sha256": hashlib.sha256(memoryview(reference)).hexdigest(),
+                    "serial_quantization_median_seconds": serial_seconds,
+                    "serial_dequantization_median_seconds": serial_dequant_seconds,
                     "parallel": rows,
                 }
             )

@@ -184,40 +184,52 @@ class _ErrorAccumulator:
         multipliers: tuple[float, ...],
         type_size: int,
         workspace_bytes: int,
+        base_norms: np.ndarray | None = None,
     ) -> None:
-        error = realized - target
         target_delta = target - base
         realized_delta = realized - base
-        delta_error = realized_delta - target_delta
         self.elements += target.size
-        self.quantization_sse += _sum_square_float64(error)
         self.target_sum_square += _sum_square_float64(target)
         self.delta_target_sum_square += _sum_square_float64(target_delta)
         self.delta_realized_sum_square += _sum_square_float64(realized_delta)
-        self.delta_error_sum_square += _sum_square_float64(delta_error)
         self.delta_dot += float(
             np.sum(
                 np.multiply(target_delta, realized_delta, dtype=np.float64),
                 dtype=np.float64,
             )
         )
+        # Reuse the two float32 delta buffers once their individual norms and
+        # dot product have been accumulated.  The arithmetic order and dtypes
+        # are identical to the former four-temporary implementation, while a
+        # large tensor chunk no longer keeps error, target delta, realized
+        # delta, and delta error resident at the same time.
+        np.subtract(realized_delta, target_delta, out=realized_delta)
+        self.delta_error_sum_square += _sum_square_float64(realized_delta)
+        np.subtract(realized, target, out=target_delta)
+        self.quantization_sse += _sum_square_float64(target_delta)
         self.maximum_absolute_error = max(
             self.maximum_absolute_error,
-            float(np.max(np.abs(error), initial=0.0)),
+            float(np.max(np.abs(target_delta), initial=0.0)),
         )
 
-        base_norm = np.linalg.norm(base, axis=1)
+        base_norm = (
+            np.linalg.norm(base, axis=1)
+            if base_norms is None
+            else base_norms.reshape(-1)
+        )
         realized_norm = np.linalg.norm(realized, axis=1)
         nonzero = base_norm > 1e-12
         if bool(nonzero.any()):
             relative = np.abs(realized_norm[nonzero] - base_norm[nonzero]) / base_norm[nonzero]
+            maximum_relative = float(np.max(relative, initial=0.0))
+            np.square(relative, out=relative)
             self.row_norm_relative_sum_square += float(
-                np.sum(relative * relative, dtype=np.float64)
+                np.sum(relative, dtype=np.float64)
             )
             self.row_norm_rows += relative.size
             self.maximum_row_norm_relative_error = max(
                 self.maximum_row_norm_relative_error,
-                float(np.max(relative, initial=0.0)),
+                maximum_relative,
             )
 
         original_blocks = original_raw.reshape(original_raw.shape[0], -1, type_size)
@@ -303,6 +315,7 @@ class _FileHashSnapshot:
     inode: int
     mtime_ns: int
     ctime_ns: int
+    interval_sha256: tuple[str, ...] = ()
 
 
 def _resolve_plan(
@@ -510,18 +523,37 @@ def _normalized_rows(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return normalized, norms
 
 
-def _edited_from_delta(
+def _prepared_edit_base(
     base: np.ndarray,
+    *,
+    preserve_row_norms: bool,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Prepare the invariant part shared by all strength candidates."""
+
+    if preserve_row_norms:
+        return base, np.linalg.norm(base, axis=1, keepdims=True)
+    return base, None
+
+
+def _edited_from_prepared(
+    prepared_base: np.ndarray,
+    original_norms: np.ndarray | None,
     delta: np.ndarray,
     *,
     scale: float,
-    preserve_row_norms: bool,
 ) -> np.ndarray:
-    if preserve_row_norms:
-        working, original_norms = _normalized_rows(base)
+    """Apply one strength to a base prepared by :func:`_prepared_edit_base`."""
+
+    if original_norms is None:
+        working = prepared_base.copy()
     else:
-        working = base.copy()
-        original_norms = None
+        working = np.zeros_like(prepared_base)
+        np.divide(
+            prepared_base,
+            original_norms,
+            out=working,
+            where=original_norms > 0,
+        )
     working -= np.float32(scale) * delta
     if original_norms is not None:
         edited_norms = np.linalg.norm(working, axis=1, keepdims=True)
@@ -535,11 +567,31 @@ def _edited_from_delta(
     return working
 
 
+def _edited_from_delta(
+    base: np.ndarray,
+    delta: np.ndarray,
+    *,
+    scale: float,
+    preserve_row_norms: bool,
+) -> np.ndarray:
+    prepared_base, original_norms = _prepared_edit_base(
+        base,
+        preserve_row_norms=preserve_row_norms,
+    )
+    return _edited_from_prepared(
+        prepared_base,
+        original_norms,
+        delta,
+        scale=scale,
+    )
+
+
 def _block_error(values: np.ndarray, target: np.ndarray, block_size: int) -> np.ndarray:
     difference = np.subtract(values, target, dtype=np.float64).reshape(
         values.shape[0], -1, block_size
     )
-    return np.sum(np.square(difference), axis=2, dtype=np.float64)
+    np.square(difference, out=difference)
+    return np.sum(difference, axis=2, dtype=np.float64)
 
 
 def _streaming_projection(
@@ -577,9 +629,21 @@ def _streaming_projection(
         )
         offset = 0
         while offset < projected.shape[0]:
+            # Full canonical tiles can be reduced directly from the decoded
+            # chunk.  Copy only a tile that actually straddles two streaming
+            # chunks; the global 128-row reduction boundaries stay unchanged.
+            remaining = projected.shape[0] - offset
+            if pending_count == 0 and remaining >= reduction_rows:
+                tile_stop = offset + reduction_rows
+                projection += (
+                    b[start + offset : start + tile_stop].T
+                    @ projected[offset:tile_stop]
+                )
+                offset = tile_stop
+                continue
             copied = min(
                 reduction_rows - pending_count,
-                projected.shape[0] - offset,
+                remaining,
             )
             pending_b[pending_count : pending_count + copied] = b[
                 start + offset : start + offset + copied
@@ -654,9 +718,9 @@ def _edit_tensor_payload(
     encoded_banks = raw.view(np.uint8).reshape(
         matrix_count, output_dim, encoded_row_bytes
     )
-    before_sha256 = _sha256_array(raw)
     total_expected_blocks = matrix_count * output_dim * (input_dim // layout.block_size)
     if edit.strength == 0:
+        before_sha256 = _sha256_array(raw)
         return {
             "before_payload_sha256": before_sha256,
             "after_payload_sha256": before_sha256,
@@ -683,6 +747,8 @@ def _edit_tensor_payload(
     right = factors[edit.right_key] if edit.right_key is not None else None
     b = factors[edit.resolved_b_key] if right is None else None
     accumulator = _ErrorAccumulator()
+    before_digest = hashlib.sha256()
+    after_digest = hashlib.sha256()
 
     for bank_index in range(matrix_count):
         bank = encoded_banks[bank_index]
@@ -708,6 +774,7 @@ def _edit_tensor_payload(
         for start in range(0, output_dim, row_chunk_size):
             stop = min(start + row_chunk_size, output_dim)
             original_raw = np.array(bank[start:stop], copy=True)
+            before_digest.update(memoryview(original_raw))
             base = codec.dequantize_rows(original_raw, qtype, input_dim)
             if right is None:
                 assert projection is not None
@@ -722,19 +789,31 @@ def _edit_tensor_payload(
                     if arithmetic_mode == "legacy-plan-v2"
                     else np.matmul(a[start:stop], right.T, dtype=np.float32)
                 )
-            target = _edited_from_delta(
+            prepared_base, original_norms = _prepared_edit_base(
                 base,
-                delta,
-                scale=edit.strength,
                 preserve_row_norms=edit.preserve_row_norms,
             )
+            target = _edited_from_prepared(
+                prepared_base,
+                original_norms,
+                delta,
+                scale=edit.strength,
+            )
             blocks_per_row = input_dim // layout.block_size
+            direct_single_requantization = (
+                not edit.preserve_original_blocks
+                and len(edit.quantization_multipliers) == 1
+            )
             if edit.preserve_original_blocks:
                 selected_raw = original_raw.copy()
                 best_error = _block_error(base, target, layout.block_size)
                 choices = np.full((base.shape[0], blocks_per_row), -1, dtype=np.int16)
             else:
-                selected_raw = np.empty_like(original_raw)
+                selected_raw = (
+                    original_raw
+                    if direct_single_requantization
+                    else np.empty_like(original_raw)
+                )
                 best_error = np.full(
                     (base.shape[0], blocks_per_row), np.inf, dtype=np.float64
                 )
@@ -755,11 +834,11 @@ def _edit_tensor_payload(
                 candidate = (
                     target
                     if multiplier == 1.0
-                    else _edited_from_delta(
-                        base,
+                    else _edited_from_prepared(
+                        prepared_base,
+                        original_norms,
                         delta,
                         scale=edit.strength * multiplier,
-                        preserve_row_norms=edit.preserve_row_norms,
                     )
                 )
                 encoded_candidate = codec.quantize_rows(candidate, qtype)
@@ -771,21 +850,27 @@ def _edit_tensor_payload(
                 realized_candidate = codec.dequantize_rows(
                     encoded_candidate, qtype, input_dim
                 )
-                candidate_error = _block_error(
-                    realized_candidate, target, layout.block_size
-                )
-                threshold = best_error * (1.0 - edit.minimum_block_improvement)
-                better = candidate_error < threshold
-                if bool(better.any()):
-                    selected_blocks = selected_raw.reshape(
-                        selected_raw.shape[0], blocks_per_row, layout.type_size
+                if direct_single_requantization:
+                    # With no original-block fallback and exactly one
+                    # multiplier, every block selects this candidate.  Its
+                    # selection error cannot affect either payload or report.
+                    choices.fill(multiplier_index)
+                else:
+                    candidate_error = _block_error(
+                        realized_candidate, target, layout.block_size
                     )
-                    candidate_blocks = encoded_candidate.reshape(
-                        encoded_candidate.shape[0], blocks_per_row, layout.type_size
-                    )
-                    selected_blocks[better] = candidate_blocks[better]
-                    best_error[better] = candidate_error[better]
-                    choices[better] = multiplier_index
+                    threshold = best_error * (1.0 - edit.minimum_block_improvement)
+                    better = candidate_error < threshold
+                    if bool(better.any()):
+                        selected_blocks = selected_raw.reshape(
+                            selected_raw.shape[0], blocks_per_row, layout.type_size
+                        )
+                        candidate_blocks = encoded_candidate.reshape(
+                            encoded_candidate.shape[0], blocks_per_row, layout.type_size
+                        )
+                        selected_blocks[better] = candidate_blocks[better]
+                        best_error[better] = candidate_error[better]
+                        choices[better] = multiplier_index
                 workspace_bytes = max(
                     workspace_bytes,
                     base.nbytes
@@ -804,7 +889,14 @@ def _edit_tensor_payload(
 
             if bool((choices == -2).any()):
                 raise RuntimeError("no quantization candidate was selected for one or more blocks")
-            realized = codec.dequantize_rows(selected_raw, qtype, input_dim)
+            if direct_single_requantization:
+                # The sole candidate necessarily wins every block against
+                # +inf.  Reuse its already-decoded realization instead of
+                # decoding the same payload a second time.
+                selected_raw = encoded_candidate
+                realized = realized_candidate
+            else:
+                realized = codec.dequantize_rows(selected_raw, qtype, input_dim)
             accumulator.update(
                 base=base,
                 target=target,
@@ -815,10 +907,13 @@ def _edit_tensor_payload(
                 multipliers=edit.quantization_multipliers,
                 type_size=layout.type_size,
                 workspace_bytes=max(workspace_bytes, realized.nbytes),
+                base_norms=original_norms,
             )
             bank[start:stop] = selected_raw
+            after_digest.update(memoryview(selected_raw))
 
-    after_sha256 = _sha256_array(raw)
+    before_sha256 = before_digest.hexdigest()
+    after_sha256 = after_digest.hexdigest()
     metrics = accumulator.report()
     changed = before_sha256 != after_sha256
     if edit.require_payload_change and not changed:
@@ -904,6 +999,8 @@ def _file_and_untouched_sha256(
     intervals: tuple[tuple[int, int], ...],
     *,
     chunk_size: int = 8 * 1024 * 1024,
+    capture_interval_hashes: bool = False,
+    capture_untouched: bool = True,
 ) -> _FileHashSnapshot:
     """Hash the complete file and all untouched regions in one sequential pass."""
 
@@ -911,28 +1008,44 @@ def _file_and_untouched_sha256(
         raise ValueError("chunk_size must be positive")
     full_digest = hashlib.sha256()
     untouched_digest = hashlib.sha256()
+    interval_digests: list[str] = []
     with path.open("rb") as handle:
         before = os.fstat(handle.fileno())
         file_size = before.st_size
         ordered_intervals = _validated_intervals(file_size, list(intervals))
         cursor = 0
-        for start, stop in (*ordered_intervals, (file_size, file_size)):
+        for start, stop in ordered_intervals:
             untouched_remaining = start - cursor
             while untouched_remaining:
                 chunk = handle.read(min(chunk_size, untouched_remaining))
                 if not chunk:
                     raise RuntimeError("GGUF ended while hashing untouched bytes")
                 full_digest.update(chunk)
-                untouched_digest.update(chunk)
+                if capture_untouched:
+                    untouched_digest.update(chunk)
                 untouched_remaining -= len(chunk)
             targeted_remaining = stop - start
+            interval_digest = hashlib.sha256() if capture_interval_hashes else None
             while targeted_remaining:
                 chunk = handle.read(min(chunk_size, targeted_remaining))
                 if not chunk:
                     raise RuntimeError("GGUF ended while hashing a target payload")
                 full_digest.update(chunk)
+                if interval_digest is not None:
+                    interval_digest.update(chunk)
                 targeted_remaining -= len(chunk)
+            if interval_digest is not None:
+                interval_digests.append(interval_digest.hexdigest())
             cursor = stop
+        untouched_remaining = file_size - cursor
+        while untouched_remaining:
+            chunk = handle.read(min(chunk_size, untouched_remaining))
+            if not chunk:
+                raise RuntimeError("GGUF ended while hashing untouched bytes")
+            full_digest.update(chunk)
+            if capture_untouched:
+                untouched_digest.update(chunk)
+            untouched_remaining -= len(chunk)
         if handle.read(1):
             raise RuntimeError("GGUF grew while it was being hashed")
         after = os.fstat(handle.fileno())
@@ -960,6 +1073,7 @@ def _file_and_untouched_sha256(
         inode=after.st_ino,
         mtime_ns=after.st_mtime_ns,
         ctime_ns=after.st_ctime_ns,
+        interval_sha256=tuple(interval_digests),
     )
 
 
@@ -994,6 +1108,7 @@ def _publish_output(
         or temporary_stat.st_ino != expected.inode
         or temporary_stat.st_size != expected.size_bytes
         or temporary_stat.st_mtime_ns != expected.mtime_ns
+        or temporary_stat.st_ctime_ns != expected.ctime_ns
     ):
         raise RuntimeError("temporary GGUF changed after final hashing")
     if force:
@@ -1202,6 +1317,7 @@ def apply_quantized_gguf_ablation(
         snapshot_hashes = _file_and_untouched_sha256(
             temporary,
             intervals if verify_untouched else (),
+            capture_untouched=verify_untouched,
         )
         if snapshot_hashes.sha256 != source_sha256:
             raise RuntimeError(
@@ -1252,13 +1368,12 @@ def apply_quantized_gguf_ablation(
         reopened = GGUFReader(temporary)
         _validate_tensor_payload_layout(reopened, temporary.stat().st_size)
         reopened_tensors = {tensor.name: tensor for tensor in reopened.tensors}
-        for prepared_row, result_row in zip(prepared, result_rows, strict=True):
+        for prepared_row in prepared:
             tensor = reopened_tensors[prepared_row["tensor_name"]]
             if (
                 tensor.tensor_type.name != prepared_row["quantization"]
                 or int(tensor.data_offset) != prepared_row["data_offset"]
                 or int(tensor.n_bytes) != prepared_row["quantized_bytes"]
-                or _sha256_array(tensor.data) != result_row["after_payload_sha256"]
             ):
                 raise RuntimeError(
                     f"post-write GGUF validation failed for {prepared_row['tensor_name']}"
@@ -1270,8 +1385,35 @@ def apply_quantized_gguf_ablation(
 
         final_hashes = _file_and_untouched_sha256(
             temporary,
-            intervals if verify_untouched else (),
+            intervals,
+            capture_interval_hashes=True,
+            capture_untouched=verify_untouched,
         )
+        expected_payloads = {
+            (
+                int(prepared_row["data_offset"]),
+                int(prepared_row["data_offset"])
+                + int(prepared_row["quantized_bytes"]),
+            ): (
+                str(prepared_row["tensor_name"]),
+                str(result_row["after_payload_sha256"]),
+            )
+            for prepared_row, result_row in zip(
+                prepared,
+                result_rows,
+                strict=True,
+            )
+        }
+        for interval, payload_sha256 in zip(
+            intervals,
+            final_hashes.interval_sha256,
+            strict=True,
+        ):
+            tensor_name, expected_payload_sha256 = expected_payloads[interval]
+            if payload_sha256 != expected_payload_sha256:
+                raise RuntimeError(
+                    f"post-write GGUF validation failed for {tensor_name}"
+                )
         if verify_untouched:
             if final_hashes.untouched_sha256 != untouched_before:
                 raise RuntimeError("GGUF bytes changed outside declared tensor payloads")

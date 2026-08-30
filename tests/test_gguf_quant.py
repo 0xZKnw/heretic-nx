@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import types
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -87,12 +88,14 @@ def _write_plan(
     preserve_original_blocks: bool = True,
     quantization_multipliers: tuple[float, ...] = (0.75, 1.0, 1.25),
     schema_version: str = "gguf-static-ablation-v3",
+    verify_untouched_bytes: bool = True,
 ) -> None:
     GGUFQuantizedAblationPlan(
         schema_version=schema_version,
         source_sha256=sha256_file(source),
         tensor_artifact_sha256=sha256_file(factors),
         row_chunk_size=2,
+        verify_untouched_bytes=verify_untouched_bytes,
         edits=(
             GGUFQuantizedTensorEdit(
                 tensor_name=target,
@@ -397,6 +400,19 @@ def test_combined_file_hash_matches_independent_region_hashes(tmp_path: Path) ->
     assert snapshot.size_bytes == len(payload)
     assert snapshot.inode == path.stat().st_ino
 
+    captured = gguf_quant_module._file_and_untouched_sha256(
+        path,
+        intervals,
+        chunk_size=37,
+        capture_interval_hashes=True,
+        capture_untouched=False,
+    )
+    assert captured.sha256 == snapshot.sha256
+    assert captured.interval_sha256 == tuple(
+        hashlib.sha256(payload[start:stop]).hexdigest()
+        for start, stop in intervals
+    )
+
 
 def test_publish_rejects_file_changed_after_final_hash(tmp_path: Path) -> None:
     temporary = tmp_path / "temporary.gguf"
@@ -412,6 +428,45 @@ def test_publish_rejects_file_changed_after_final_hash(tmp_path: Path) -> None:
             force=False,
             expected=snapshot,
         )
+    assert not output.exists()
+
+
+def test_search_only_merge_still_verifies_final_target_payload(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source.gguf"
+    output = tmp_path / "edited.gguf"
+    factors = tmp_path / "factors.safetensors"
+    plan = tmp_path / "plan.json"
+    _write_quantized_gguf(source, (GGMLQuantizationType.Q8_0,))
+    save_file({"axis": np.ones(4, dtype=np.float32)}, factors)
+    _write_plan(
+        source,
+        factors,
+        plan,
+        qtype="Q8_0",
+        verify_untouched_bytes=False,
+    )
+    original_hash = gguf_quant_module._file_and_untouched_sha256
+
+    def corrupt_final_payload_hash(path, intervals, **kwargs):
+        snapshot = original_hash(path, intervals, **kwargs)
+        if kwargs.get("capture_interval_hashes"):
+            return replace(
+                snapshot,
+                interval_sha256=("0" * 64,) * len(snapshot.interval_sha256),
+            )
+        return snapshot
+
+    monkeypatch.setattr(
+        gguf_quant_module,
+        "_file_and_untouched_sha256",
+        corrupt_final_payload_hash,
+    )
+
+    with pytest.raises(RuntimeError, match="post-write GGUF validation failed"):
+        apply_quantized_gguf_ablation(source, output, plan, factors)
     assert not output.exists()
 
 
@@ -613,3 +668,106 @@ def test_native_k_dequantization_matches_gguf_python(qtype_name: str) -> None:
     native = registry.dequantize_rows(encoded, qtype, 512)
 
     np.testing.assert_array_equal(native, python_dequantize(encoded, qtype))
+
+
+def test_large_native_dequantization_is_parallel_and_bit_identical() -> None:
+    qtype = GGMLQuantizationType.Q4_K
+    serial = _native_registry()
+    values = np.ascontiguousarray(
+        np.random.default_rng(229).normal(size=(1024, 1024)),
+        dtype=np.float32,
+    )
+    encoded = serial.quantize_rows(values, qtype)
+    reference = serial.dequantize_rows(encoded, qtype, 1024)
+    serial.close()
+
+    parallel = GGUFQuantizationCodecRegistry(
+        quantization_threads=4,
+        parallel_min_elements=1,
+    )
+    try:
+        parallel.ensure_supported(qtype)
+        assert parallel._native is not None
+        assert parallel._native._executor is None
+        candidate = parallel.dequantize_rows(encoded, qtype, 1024)
+        assert parallel._native._executor is not None
+    finally:
+        parallel.close()
+
+    np.testing.assert_array_equal(candidate, reference)
+
+
+def test_single_candidate_requantization_reuses_realized_payload() -> None:
+    class CountingCodec:
+        def __init__(self, delegate: GGUFQuantizationCodecRegistry) -> None:
+            self.delegate = delegate
+            self.dequantize_calls = 0
+
+        def dequantize_rows(self, *args, **kwargs):
+            self.dequantize_calls += 1
+            return self.delegate.dequantize_rows(*args, **kwargs)
+
+        def quantize_rows(self, *args, **kwargs):
+            return self.delegate.quantize_rows(*args, **kwargs)
+
+    generator = np.random.default_rng(233)
+    qtype = GGMLQuantizationType.Q8_0
+    rows, input_dim = 4, 256
+    base_codec = GGUFQuantizationCodecRegistry(prefer_native=False)
+    values = np.ascontiguousarray(
+        generator.normal(size=(rows, input_dim)),
+        dtype=np.float32,
+    )
+    original = base_codec.quantize_rows(values, qtype)
+    factor_a = np.ascontiguousarray(
+        generator.normal(size=(rows, 1)),
+        dtype=np.float32,
+    )
+    right = np.ascontiguousarray(
+        generator.normal(size=(input_dim, 1)),
+        dtype=np.float32,
+    )
+    edit = _ResolvedEdit(
+        tensor_name="direct.weight",
+        expected_quantization="Q8_0",
+        a_key="a",
+        b_key=None,
+        right_key="right",
+        strength=0.4,
+        preserve_row_norms=False,
+        preserve_original_blocks=False,
+        quantization_multipliers=(1.0,),
+        minimum_block_improvement=0.0,
+        require_payload_change=True,
+        minimum_delta_cosine=None,
+        maximum_delta_relative_error=None,
+        maximum_row_norm_relative_error=None,
+    )
+
+    def execute(candidate_edit: _ResolvedEdit):
+        payload = original.copy()
+        tensor = types.SimpleNamespace(
+            tensor_type=qtype,
+            shape=np.array([input_dim, rows]),
+            data=payload,
+            name=candidate_edit.tensor_name,
+        )
+        codec = CountingCodec(base_codec)
+        report = _edit_tensor_payload(
+            tensor,
+            candidate_edit,
+            {"a": factor_a, "right": right},
+            codec,
+            row_chunk_size=2,
+        )
+        return payload, report, codec.dequantize_calls
+
+    optimized_payload, optimized_report, optimized_dequantizations = execute(edit)
+    reference_payload, reference_report, reference_dequantizations = execute(
+        replace(edit, quantization_multipliers=(1.0, 1.0))
+    )
+
+    np.testing.assert_array_equal(optimized_payload, reference_payload)
+    assert optimized_report == reference_report
+    assert optimized_dequantizations == 4
+    assert reference_dequantizations == 8
