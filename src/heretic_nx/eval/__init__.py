@@ -13,6 +13,7 @@ from .capability import (
 from .metrics import BenignMetrics, TaskOutcome, aggregate_benign_metrics
 from .gguf_runtime import (
     attest_native_model,
+    NativeRuntimeClient,
     native_server_properties,
     require_native_model_identity,
 )
@@ -75,6 +76,7 @@ __all__ = [
     "PhaseTimingStats",
     "PortfolioETA",
     "KLObservation",
+    "NativeRuntimeClient",
     "PublicReportObservation",
     "RefusalObservation",
     "ResponseRecord",

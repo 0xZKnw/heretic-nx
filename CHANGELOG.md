@@ -140,6 +140,11 @@ All notable public changes to Heretic NX are documented here.
   preserving a global stage barrier. The synthetic eight-candidate/four-slot
   I/O benchmark is 3.95x faster than serial; this deliberately does not claim
   equivalent scaling for one model on one GPU.
+- Native GGUF capability clients now reuse one HTTP/1.1 connection per worker
+  thread without sharing sockets or changing request order, payloads or
+  checkpoint barriers. On 96 real Ling capability prompts with eight slots,
+  the rotated benchmark improves from 21.0855 s to 20.5739 s (1.025x), with
+  identical outputs in every run; ultra-short prompts remain effectively neutral.
 
 ### Fixed
 

@@ -33,9 +33,8 @@ from experiments.lfm25_residual_stream_capability import LETTERS, task_scores
 from experiments.lfm25_xstest_retest import XSTEST_ID, XSTEST_REVISION
 from heretic_nx.eval.capability import paired_bootstrap_interval
 from heretic_nx.eval.gguf_runtime import (
+    NativeRuntimeClient,
     RESTRICTED_GRAMMAR,
-    native_completion,
-    native_restricted_choice,
 )
 from heretic_nx.hashing import (
     canonical_json,
@@ -144,6 +143,7 @@ def common_evidence(
 
 
 def run_xstest(args: argparse.Namespace, artifact_hash: str) -> None:
+    client = NativeRuntimeClient(args.native_endpoint)
     dataset = load_dataset(
         XSTEST_ID,
         revision=XSTEST_REVISION,
@@ -175,13 +175,12 @@ def run_xstest(args: argparse.Namespace, artifact_hash: str) -> None:
         "close_think": True,
         "temperature": -1,
         "runtime_build": LLAMA_CPP_BUILD,
+        "http_connections": "thread-local persistent HTTP/1.1",
     }
     responses, seconds = resume_map(
         prompts=prompt_tokens,
-        worker=lambda tokens: native_completion(
-            args.native_endpoint,
-            tokens,
-            max_tokens=MAX_NEW_TOKENS,
+        worker=lambda tokens: client.completion(
+            tokens, max_tokens=MAX_NEW_TOKENS
         ),
         partial_path=args.run_dir / "xstest-native.partial.json",
         expected=expected,
@@ -207,6 +206,7 @@ def run_xstest(args: argparse.Namespace, artifact_hash: str) -> None:
             "build": LLAMA_CPP_BUILD,
             "endpoint": args.native_endpoint,
             "api": "native /completion",
+            "http_connections": "thread-local persistent HTTP/1.1",
         },
         "dataset": {
             "id": XSTEST_ID,
@@ -244,6 +244,7 @@ def run_xstest(args: argparse.Namespace, artifact_hash: str) -> None:
 
 
 def run_capability(args: argparse.Namespace, artifact_hash: str) -> None:
+    client = NativeRuntimeClient(args.native_endpoint)
     rows = expanded_capability_rows()
     rows_hash = sha256_json(rows)
     tokenizer = AutoTokenizer.from_pretrained(base_path())
@@ -273,13 +274,11 @@ def run_capability(args: argparse.Namespace, artifact_hash: str) -> None:
         "close_think": True,
         "temperature": -1,
         "runtime_build": LLAMA_CPP_BUILD,
+        "http_connections": "thread-local persistent HTTP/1.1",
     }
     raw_choices, seconds = resume_map(
         prompts=prompt_tokens,
-        worker=lambda tokens: native_restricted_choice(
-            args.native_endpoint,
-            tokens,
-        ),
+        worker=client.restricted_choice,
         partial_path=args.run_dir / "capability-native.partial.json",
         expected=expected,
         parallel=args.parallel,
@@ -343,6 +342,7 @@ def run_capability(args: argparse.Namespace, artifact_hash: str) -> None:
             "build": LLAMA_CPP_BUILD,
             "endpoint": args.native_endpoint,
             "api": "native /completion",
+            "http_connections": "thread-local persistent HTTP/1.1",
         },
         "rows": len(rows),
         "rows_sha256": rows_hash,

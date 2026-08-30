@@ -13,13 +13,13 @@ from experiments.lfm25_2p6b_gguf_comparator_eval import (
     LLAMA_CPP_BUILD,
     LLAMA_CPP_RUNTIME,
     RESTRICTED_GRAMMAR,
-    native_restricted_choice,
     resume_map,
     write_json,
 )
 from experiments.lfm25_2p6b_residual_stream import base_path, render
 from experiments.lfm25_closed_track_eval import expanded_capability_rows
 from experiments.lfm25_residual_stream_capability import LETTERS, task_scores
+from heretic_nx.eval.gguf_runtime import NativeRuntimeClient
 from heretic_nx.hashing import sha256_file, sha256_json
 
 
@@ -99,13 +99,12 @@ def main() -> None:
         "close_think": True,
         "temperature": -1,
         "runtime_build": LLAMA_CPP_BUILD,
+        "http_connections": "thread-local persistent HTTP/1.1",
     }
+    client = NativeRuntimeClient(args.endpoint)
     raw_choices, seconds = resume_map(
         prompts=prompt_tokens,
-        worker=lambda tokens: native_restricted_choice(
-            args.endpoint,
-            tokens,
-        ),
+        worker=client.restricted_choice,
         partial_path=args.run_dir / args.partial_name,
         expected=expected,
         parallel=args.parallel,
@@ -158,6 +157,7 @@ def main() -> None:
             "build": LLAMA_CPP_BUILD,
             "endpoint": args.endpoint,
             "api": "native /completion",
+            "http_connections": "thread-local persistent HTTP/1.1",
         },
         "native_reference": {
             "report": str(native_report_path.relative_to(ROOT)),

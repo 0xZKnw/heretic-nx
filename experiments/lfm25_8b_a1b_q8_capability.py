@@ -17,7 +17,7 @@ from experiments.lfm25_2p6b_residual_stream import render
 from experiments.lfm25_closed_track_eval import expanded_capability_rows
 from experiments.lfm25_residual_stream_capability import LETTERS, task_scores
 from heretic_nx.eval.capability import paired_bootstrap_interval
-from heretic_nx.eval.gguf_runtime import RESTRICTED_GRAMMAR, native_restricted_choice
+from heretic_nx.eval.gguf_runtime import NativeRuntimeClient, RESTRICTED_GRAMMAR
 from heretic_nx.hashing import canonical_json, sha256_file, sha256_json
 
 
@@ -29,6 +29,7 @@ RUNTIME = {
     "distribution": "LM Studio llama.cpp macOS Metal 2.31.2",
     "build": "0.3.0-dev build 1 commit 1844325",
     "api": "native /completion",
+    "http_connections": "thread-local persistent HTTP/1.1",
     "parallel_slots": 4,
     "total_context": 4096,
 }
@@ -133,10 +134,11 @@ def collect(args: argparse.Namespace) -> None:
         "max_new_tokens": 1,
         "runtime": RUNTIME,
     }
+    client = NativeRuntimeClient(args.endpoint)
     partial = RUN_DIR / f"{args.label}.partial.json"
     choices, _seconds = resume_map(
         prompts=prompts,
-        worker=lambda tokens: native_restricted_choice(args.endpoint, tokens),
+        worker=client.restricted_choice,
         partial_path=partial,
         expected=expected,
         parallel=args.parallel,

@@ -32,7 +32,7 @@ from heretic_nx.data.research_splits import (
 from heretic_nx.eval.gguf_runtime import (
     attest_native_model,
     lm_studio_completion,
-    native_completion,
+    NativeRuntimeClient,
     require_native_model_identity,
 )
 from heretic_nx.hashing import canonical_json, sha256_file, sha256_json
@@ -126,6 +126,7 @@ def main() -> None:
         ):
             raise RuntimeError("attested artifact does not match --artifact-sha256")
         artifact_attested = True
+        native_client = NativeRuntimeClient(args.endpoint)
     else:
         artifact_sha256 = (
             sha256_file(args.artifact)
@@ -138,6 +139,7 @@ def main() -> None:
         ):
             raise RuntimeError("local artifact does not match --artifact-sha256")
         artifact_attested = False
+        native_client = None
 
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
     source_split = "test" if args.phase == "public-report" else "train"
@@ -191,6 +193,8 @@ def main() -> None:
         "max_new_tokens": args.max_new_tokens,
         "api": args.api,
     }
+    if native_client is not None:
+        expected["http_connections"] = "thread-local persistent HTTP/1.1"
     partial = RUN_DIR / f"{args.label}.partial.json"
     checkpoint: dict[str, Any] = {
         **expected,
@@ -217,12 +221,11 @@ def main() -> None:
             )
             started = time.time()
             if args.api == "native":
+                assert native_client is not None
                 produced = list(
                     pool.map(
-                        lambda tokens: native_completion(
-                            args.endpoint,
-                            tokens,
-                            max_tokens=args.max_new_tokens,
+                        lambda tokens: native_client.completion(
+                            tokens, max_tokens=args.max_new_tokens
                         ),
                         batch,
                     )
@@ -308,6 +311,11 @@ def main() -> None:
             "max_new_tokens": args.max_new_tokens,
             "temperature": -1,
             "api": args.api,
+            **(
+                {"http_connections": expected["http_connections"]}
+                if native_client is not None
+                else {}
+            ),
             "prompt_tokens_sha256": expected["prompt_tokens_sha256"],
             "refusal_markers": list(REFUSAL_MARKERS),
             "refusal_normalizer": REFUSAL_NORMALIZER_V1,

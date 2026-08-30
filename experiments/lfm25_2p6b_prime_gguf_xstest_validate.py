@@ -24,7 +24,7 @@ from experiments.lfm25_2p6b_residual_stream import (
     render,
 )
 from experiments.lfm25_xstest_retest import XSTEST_ID, XSTEST_REVISION
-from heretic_nx.eval.gguf_runtime import native_completion
+from heretic_nx.eval.gguf_runtime import NativeRuntimeClient
 from heretic_nx.hashing import sha256_file, sha256_json
 
 
@@ -105,6 +105,7 @@ def main() -> None:
         tokenizer.encode(value, add_special_tokens=False) for value in rendered
     ]
     prompt_tokens_hash = sha256_json(prompt_tokens)
+    client = NativeRuntimeClient(args.endpoint)
     expected = {
         "schema_version": "lfm25-2p6b-prime-q8-xstest-partial-v1",
         "artifact_sha256": artifact_hash,
@@ -114,13 +115,12 @@ def main() -> None:
         "close_think": True,
         "temperature": -1,
         "runtime_build": LLAMA_CPP_BUILD,
+        "http_connections": "thread-local persistent HTTP/1.1",
     }
     responses, seconds = resume_map(
         prompts=prompt_tokens,
-        worker=lambda tokens: native_completion(
-            args.endpoint,
-            tokens,
-            max_tokens=MAX_NEW_TOKENS,
+        worker=lambda tokens: client.completion(
+            tokens, max_tokens=MAX_NEW_TOKENS
         ),
         partial_path=args.run_dir / args.partial_name,
         expected=expected,
@@ -156,6 +156,7 @@ def main() -> None:
             "build": LLAMA_CPP_BUILD,
             "endpoint": args.endpoint,
             "api": "native /completion",
+            "http_connections": "thread-local persistent HTTP/1.1",
         },
         "native_reference": {
             "report": str(native_report_path.relative_to(ROOT)),

@@ -25,7 +25,7 @@ from experiments.lfm25_2p6b_gguf_comparator_eval import (
     LLAMA_CPP_BUILD,
     LLAMA_CPP_RUNTIME,
 )
-from heretic_nx.eval.gguf_runtime import native_completion
+from heretic_nx.eval.gguf_runtime import NativeRuntimeClient
 from heretic_nx.hashing import canonical_json, sha256_json
 
 
@@ -54,14 +54,13 @@ def main() -> None:
     prompts = [
         tokenizer.encode(prompt, add_special_tokens=False) for prompt in rendered
     ]
+    client = NativeRuntimeClient(args.endpoint)
     started = time.time()
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
         responses = list(
             pool.map(
-                lambda prompt: native_completion(
-                    args.endpoint,
-                    prompt,
-                    max_tokens=MAX_NEW_TOKENS,
+                lambda prompt: client.completion(
+                    prompt, max_tokens=MAX_NEW_TOKENS
                 ),
                 prompts,
             )
@@ -79,6 +78,7 @@ def main() -> None:
             "distribution": LLAMA_CPP_RUNTIME,
             "build": LLAMA_CPP_BUILD,
             "api": "native /completion",
+            "http_connections": "thread-local persistent HTTP/1.1",
         },
         "dataset": {"id": BAD_DATASET, "revision": BAD_REVISION},
         "protocol": {

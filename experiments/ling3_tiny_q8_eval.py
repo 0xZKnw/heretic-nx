@@ -29,7 +29,7 @@ from heretic_nx.data.research_splits import (
 )
 from heretic_nx.eval.gguf_runtime import (
     attest_native_model,
-    native_completion,
+    NativeRuntimeClient,
     require_native_model_identity,
 )
 from heretic_nx.hashing import canonical_json, sha256_json
@@ -133,6 +133,7 @@ def main() -> None:
     ):
         raise RuntimeError("attested artifact does not match --artifact-sha256")
     artifact_sha256 = str(runtime_model["artifact_sha256"])
+    client = NativeRuntimeClient(args.endpoint)
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH, trust_remote_code=True)
     source_split = "test" if args.phase == "public-report" else "train"
     dataset_split = (
@@ -187,6 +188,7 @@ def main() -> None:
         "temperature": -1,
         "thinking": "off",
         "api": "native pre-tokenized /completion",
+        "http_connections": "thread-local persistent HTTP/1.1",
     }
     if args.refusal_cap is not None:
         expected["refusal_cap"] = args.refusal_cap
@@ -225,10 +227,8 @@ def main() -> None:
             started = time.time()
             produced = list(
                 pool.map(
-                    lambda tokens: native_completion(
-                        args.endpoint,
-                        tokens,
-                        max_tokens=args.max_new_tokens,
+                    lambda tokens: client.completion(
+                        tokens, max_tokens=args.max_new_tokens
                     ),
                     batch,
                 )

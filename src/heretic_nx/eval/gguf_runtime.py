@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
 import json
 from pathlib import Path
+from threading import local
 import time
 from typing import Any, Mapping
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from heretic_nx.hashing import canonical_json
@@ -14,6 +17,165 @@ from heretic_nx.hashing import sha256_file
 
 
 RESTRICTED_GRAMMAR = "root ::= [ABCD]"
+
+
+class _PersistentJSONClient:
+    """Thread-local HTTP/1.1 connections for a single inference endpoint."""
+
+    def __init__(self, endpoint: str) -> None:
+        parsed = urlsplit(endpoint.rstrip("/"))
+        if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+            raise ValueError("endpoint must be an absolute HTTP(S) URL")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("endpoint credentials are not supported")
+        if parsed.query or parsed.fragment:
+            raise ValueError("endpoint must not contain a query or fragment")
+        self.endpoint = endpoint.rstrip("/")
+        self._scheme = parsed.scheme
+        self._host = parsed.hostname
+        self._port = parsed.port
+        self._base_path = parsed.path.rstrip("/")
+        self._thread_state = local()
+
+    def _new_connection(self, timeout: float) -> HTTPConnection:
+        connection_type = (
+            HTTPSConnection if self._scheme == "https" else HTTPConnection
+        )
+        return connection_type(self._host, self._port, timeout=timeout)
+
+    def _connection(self, timeout: float) -> HTTPConnection:
+        connection = getattr(self._thread_state, "connection", None)
+        if connection is None:
+            connection = self._new_connection(timeout)
+            self._thread_state.connection = connection
+        else:
+            connection.timeout = timeout
+            if connection.sock is not None:
+                connection.sock.settimeout(timeout)
+        return connection
+
+    def close(self) -> None:
+        """Close the connection owned by the calling thread, if any."""
+
+        connection = getattr(self._thread_state, "connection", None)
+        if connection is not None:
+            try:
+                connection.close()
+            except OSError:
+                pass
+            finally:
+                del self._thread_state.connection
+
+    def request_json(
+        self,
+        path: str,
+        *,
+        payload: Mapping[str, Any],
+        timeout: float,
+        failure: str,
+    ) -> Any:
+        if not path.startswith("/"):
+            raise ValueError("request path must start with a slash")
+        body = canonical_json(payload)
+        request_path = self._base_path + path
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                connection = self._connection(timeout)
+                connection.request(
+                    "POST",
+                    request_path,
+                    body=body,
+                    headers={
+                        "Accept": "application/json",
+                        "Connection": "keep-alive",
+                        "Content-Type": "application/json",
+                    },
+                )
+                response = connection.getresponse()
+                response_body = response.read()
+                if not 200 <= response.status < 300:
+                    self.close()
+                    status_error = RuntimeError(
+                        f"{failure}: HTTP {response.status} {response.reason}"
+                    )
+                    if response.status in {408, 429} or response.status >= 500:
+                        last_error = status_error
+                        if attempt < 2:
+                            time.sleep(attempt + 1)
+                            continue
+                        raise RuntimeError(
+                            f"{failure} after three attempts"
+                        ) from status_error
+                    raise status_error
+                try:
+                    return json.loads(response_body)
+                except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                    self.close()
+                    raise RuntimeError(f"{failure}: invalid JSON response") from error
+            except (HTTPException, OSError, TimeoutError) as error:
+                last_error = error
+                self.close()
+                if attempt < 2:
+                    time.sleep(attempt + 1)
+        raise RuntimeError(f"{failure} after three attempts") from last_error
+
+
+class NativeRuntimeClient:
+    """Deterministic llama.cpp client with one persistent connection per thread."""
+
+    def __init__(self, endpoint: str) -> None:
+        self._http = _PersistentJSONClient(endpoint)
+
+    @property
+    def endpoint(self) -> str:
+        return self._http.endpoint
+
+    def close(self) -> None:
+        self._http.close()
+
+    def _content(self, result: Any, *, failure: str) -> str:
+        if not isinstance(result, dict) or not isinstance(result.get("content"), str):
+            self.close()
+            raise RuntimeError(f"{failure}: response omitted string content")
+        return result["content"]
+
+    def restricted_choice(self, prompt_tokens: list[int]) -> str:
+        payload = {
+            "prompt": prompt_tokens,
+            "n_predict": 1,
+            "temperature": -1,
+            "grammar": RESTRICTED_GRAMMAR,
+            "stream": False,
+        }
+        result = self._http.request_json(
+            "/completion",
+            payload=payload,
+            timeout=300,
+            failure="llama.cpp native completion failed",
+        )
+        return self._content(
+            result,
+            failure="llama.cpp native completion failed",
+        )
+
+    def completion(self, prompt_tokens: list[int], *, max_tokens: int) -> str:
+        payload = {
+            "prompt": prompt_tokens,
+            "n_predict": max_tokens,
+            "temperature": -1,
+            "stream": False,
+        }
+        result = self._http.request_json(
+            "/completion",
+            payload=payload,
+            timeout=300,
+            failure="llama.cpp native generation failed",
+        )
+        return self._content(
+            result,
+            failure="llama.cpp native generation failed",
+        )
 
 
 def native_server_properties(endpoint: str) -> dict[str, Any]:
