@@ -10,17 +10,20 @@ from pathlib import Path
 from safetensors.torch import load_file, save_file
 import torch
 
-from experiments.lfm25_8b_a1b_mlx_sites import PROGRESS, RUN_DIR
 from heretic_nx.edits.activation_op import metric_projector_operator
 from heretic_nx.geometry.consensus import grassmann_consensus
 from heretic_nx.geometry.metric import (
     LowRankMetric,
     MetricGeometryGate,
-    metric_residualize,
+    require_static_geometry,
 )
+from heretic_nx.geometry.pca import exact_principal_components
 from heretic_nx.hashing import canonical_json, sha256_file
 
 
+ROOT = Path(__file__).resolve().parents[1]
+RUN_DIR = ROOT / "runs" / "lfm25-8b-a1b-q8-direct"
+PROGRESS = RUN_DIR / "mlx-site-activations.progress.json"
 ACTIVATIONS = RUN_DIR / "mlx-site-activations.safetensors"
 OUTPUT = RUN_DIR / "prime-site-operators.safetensors"
 REPORT = RUN_DIR / "prime-site-operators.json"
@@ -67,16 +70,15 @@ def main() -> None:
             rejected.append({**spec, "reason": "empty-consensus"})
             continue
 
-        centered = safe_values - safe_values.mean(dim=0)
-        torch.manual_seed(8258 + site_index)
-        _u, singular, vectors = torch.pca_lowrank(
-            centered,
-            q=min(CAPABILITY_RANK + 4, centered.shape[0], centered.shape[1]),
-            center=False,
-            niter=3,
+        capability_fit = exact_principal_components(
+            safe_values,
+            maximum_rank=CAPABILITY_RANK,
         )
-        capability = vectors[:, :CAPABILITY_RANK]
-        singular = singular[:CAPABILITY_RANK]
+        capability = capability_fit.basis
+        singular = capability_fit.singular_values
+        if capability_fit.effective_rank == 0:
+            rejected.append({**spec, "reason": "empty-capability-subspace"})
+            continue
         covariance_factor = capability * (
             singular / math.sqrt(max(safe_values.shape[0] - 1, 1))
         )[None, :]
@@ -86,15 +88,23 @@ def main() -> None:
             regularization=REGULARIZATION,
         )
         geometry = gate.evaluate(consensus.basis, capability, metric)
-        editable = metric_residualize(consensus.basis, capability, metric)
-        if editable.shape[1] == 0:
+        try:
+            editable = require_static_geometry(
+                geometry,
+                site_id=str(spec["site_id"]),
+            )
+        except RuntimeError:
             rejected.append(
                 {
                     **spec,
-                    "reason": "collapsed-metric-residual",
+                    "reason": "metric-geometry-gate",
                     "current_gate_decision": geometry.decision,
                     "minimum_angle_deg": geometry.minimum_angle_deg,
                     "retained_energy": geometry.retained_energy,
+                    "capability_effective_rank": capability_fit.effective_rank,
+                    "capability_retained_energy_fraction": (
+                        capability_fit.retained_energy_fraction
+                    ),
                 }
             )
             continue
@@ -130,7 +140,11 @@ def main() -> None:
                 "minimum_angle_deg": geometry.minimum_angle_deg,
                 "retained_energy": geometry.retained_energy,
                 "current_gate_decision": geometry.decision,
-                "selection_gate": "legacy-prime-metric-residual",
+                "selection_gate": "safe-static-metric-geometry",
+                "capability_effective_rank": capability_fit.effective_rank,
+                "capability_retained_energy_fraction": (
+                    capability_fit.retained_energy_fraction
+                ),
                 "consensus_mass": consensus.captured_stability_mass,
             }
         )

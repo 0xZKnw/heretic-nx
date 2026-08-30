@@ -71,6 +71,17 @@ All notable public changes to Heretic NX are documented here.
   weakening source binding or undeclared-byte checks; the reproducible 128 MiB
   microbenchmark is 1.72x faster on the reference Mac.
 
+### Fixed
+
+- Direct-Q8 PRIME site fitting now enforces the metric geometry decision instead
+  of normalizing rejected near-zero residuals into full-strength operators. On
+  the retained LFM2.5 8B activation cache, all 48 unsafe sites are now rejected
+  (maximum retained energy `4.53e-5`) rather than silently promoted.
+- Capability PCA now uses the exact smaller Gram space, reports its effective
+  numerical rank and drops rank-deficient null axes. Singular vectors stay
+  paired with their singular values for correct covariance reconstruction, and
+  CPU-only post-processing no longer imports the Metal collection runtime.
+
 ## 0.2.0 — 2026-08-24
 
 ### Added

@@ -31,6 +31,7 @@ from .metric import (
     metric_residualize,
     require_static_geometry,
 )
+from .pca import PrincipalComponentFit, exact_principal_components
 from .token_positions import (
     PromptTokenPositions,
     instruction_index_from_offsets,
@@ -39,6 +40,7 @@ from .token_positions import (
 
 __all__ = [
     "PromptTokenPositions",
+    "PrincipalComponentFit",
     "ConsensusSubspace",
     "ContrastiveAxis",
     "LeaceEraser",
@@ -47,6 +49,7 @@ __all__ = [
     "TaskConditionedGeometry",
     "TaskContrast",
     "fit_task_conditioned_geometry",
+    "exact_principal_components",
     "fisher_factor_from_gradients",
     "fit_leace",
     "fit_contrastive_axis",
