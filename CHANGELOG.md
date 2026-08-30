@@ -6,6 +6,13 @@ All notable public changes to Heretic NX are documented here.
 
 ### Added
 
+- A model-neutral, fail-closed structural frontend now separates residual
+  activation sites from concrete weight storage, records deterministic OI, IO
+  and routed EOI layouts, and hashes every inclusion, exclusion, alias and
+  ambiguity. It recognizes coherent dense, shared-expert and routed-expert
+  branches while refusing non-text stacks, sequence operators without an
+  explicit contract, shared storage, non-floating edit workspaces and
+  non-unique semantic roles.
 - A model-neutral native llama.cpp raw-logit collector now writes complete
   full-vocabulary float32 matrices without JSON transport. Collection binds
   simple or split GGUF inputs, token rows, tokenizer assets and the actual

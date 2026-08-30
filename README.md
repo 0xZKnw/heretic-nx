@@ -152,8 +152,8 @@ published together on
 - Welford streaming statistics and Frequent Directions sketches;
 - covariance/Fisher metrics, LEACE and protected capability subspaces;
 - multi-fold Grassmann consensus and principal-angle geometry gates;
-- architecture-aware semantic sites for LFM, Llama/Gemma-style and related
-  decoder projection conventions;
+- fail-closed structural discovery for coherent dense, shared/routed MoE,
+  split/fused/MLA attention and proven OI/IO/EOI projection layouts;
 - padding-safe residual-stream extraction and per-block contrastive axes;
 - exact low-rank projectors, Cayley editors and sparse activation operators;
 - gradient attribution, causal scanning and reduced QCQP optimization;
