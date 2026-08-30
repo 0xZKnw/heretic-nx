@@ -80,8 +80,28 @@ def _gguf_api() -> tuple[Any, Any, Any, Any]:
     return GGUFReader, GGMLQuantizationType, dequantize, quantize
 
 
-def _copy_source(source: Path, target: Path) -> None:
-    """Clone on APFS when available, with a portable byte-copy fallback."""
+GGUFSnapshotCopyMode = Literal["clone", "copy"]
+
+
+def _copy_source(
+    source: Path,
+    target: Path,
+    *,
+    minimum_free_after_copy: int = 0,
+) -> GGUFSnapshotCopyMode:
+    """Clone when available, otherwise budget and perform a full byte copy.
+
+    ``minimum_free_after_copy`` lets multi-output transactions reserve space
+    for later copy-on-write payloads before starting a potentially model-sized
+    fallback copy. Existing callers keep the same behavior with the default.
+    """
+
+    if (
+        isinstance(minimum_free_after_copy, bool)
+        or not isinstance(minimum_free_after_copy, int)
+        or minimum_free_after_copy < 0
+    ):
+        raise ValueError("minimum_free_after_copy must be a non-negative integer")
 
     if sys.platform == "darwin" and Path("/bin/cp").is_file():
         try:
@@ -91,10 +111,19 @@ def _copy_source(source: Path, target: Path) -> None:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            return
+            return "clone"
         except subprocess.CalledProcessError:
             pass
+    source_size = source.stat().st_size
+    required_free = source_size + minimum_free_after_copy
+    free = shutil.disk_usage(target.parent).free
+    if free < required_free:
+        raise RuntimeError(
+            "insufficient free space for full GGUF snapshot copy fallback: "
+            f"need {required_free} bytes, have {free}"
+        )
     shutil.copyfile(source, target)
+    return "copy"
 
 
 def inspect_q8_gguf(path: str | Path) -> dict[str, Any]:

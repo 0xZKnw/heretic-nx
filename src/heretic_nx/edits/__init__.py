@@ -38,6 +38,10 @@ from .gguf_quant import (
     apply_quantized_gguf_ablation,
     inspect_quantized_gguf,
 )
+from .gguf_sweep import (
+    GGUFStrengthSweepCandidate,
+    apply_quantized_gguf_strength_sweep,
+)
 from .sparse import atomic_unit_scores, select_atomic_units
 from .spectral import SignedSpectralEdit, fit_signed_spectral_operator
 
@@ -52,6 +56,7 @@ __all__ = [
     "GGUFQ8TensorEdit",
     "GGUFQuantizedAblationPlan",
     "GGUFQuantizedTensorEdit",
+    "GGUFStrengthSweepCandidate",
     "LowRankOptimizationResult",
     "NXIR2",
     "NXIR3",
@@ -64,6 +69,7 @@ __all__ = [
     "activation_forward_hook",
     "apply_q8_gguf_ablation",
     "apply_quantized_gguf_ablation",
+    "apply_quantized_gguf_strength_sweep",
     "apply_residual_stream_weight_edits",
     "affine_operator_from_leace",
     "atomic_unit_scores",

@@ -19,6 +19,9 @@ All notable public changes to Heretic NX are documented here.
   Directions compression.
 - Native libggml K-codec coverage, atomic no-clobber publication and
   snapshot-bound source/factor/plan verification.
+- Exact multi-strength GGUF portfolios for every supported same-type codec,
+  including mixed-quant tensors and stacked MoE expert banks, with inode-bound
+  source snapshots and clone-aware disk budgeting.
 - Refusal-cap early termination for frontier screening, while keeping full
   104-row reports mandatory before KL certification.
 - Content-addressed refusal-first evaluation scheduling with immutable replay
@@ -71,6 +74,12 @@ All notable public changes to Heretic NX are documented here.
 
 ### Performance
 
+- Quantized strength portfolios now share source decoding and invariant
+  projector work across 2–32 independently attested v3 plans, while keeping
+  same-type requantization, gates, final hashes and publication isolated per
+  candidate. For eight exact candidates at 2,048x4,096/rank 8, the reproducible
+  medians are 1.66x/1.31x for direct/projector Q8_0 and 1.37x/1.25x for
+  direct/projector Q4_K; all outputs match independent runs byte for byte.
 - Directory provenance hashing now reads independent model shards with a
   deterministic two-worker pipeline while preserving canonical path order and
   the exact historical digest. A real 9.6 GB two-shard model hashes 1.86x

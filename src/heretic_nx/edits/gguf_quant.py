@@ -1434,7 +1434,7 @@ def apply_quantized_gguf_ablation(
     os.close(temporary_fd)
     temporary = Path(temporary_name)
     try:
-        _copy_source(source, temporary)
+        snapshot_copy_mode = _copy_source(source, temporary)
         intervals = _validated_intervals(
             temporary.stat().st_size,
             [
@@ -1558,6 +1558,7 @@ def apply_quantized_gguf_ablation(
             expected=final_hashes,
         )
         report["dry_run"] = False
+        report["snapshot_copy_mode"] = snapshot_copy_mode
         report["edits"] = result_rows
         report["output"] = {
             "path": str(output),
