@@ -280,6 +280,7 @@ python benchmarks/backend_microbench.py
 python benchmarks/gguf_codec_parallel.py
 python benchmarks/spectral_compact.py
 python benchmarks/leace_thin.py
+python benchmarks/activation_operator.py
 ```
 
 It compares the former dense `d x d` regularization path with the rank-space
@@ -288,8 +289,9 @@ checks bit identity and reports Q2_K through Q6_K scaling across worker counts.
 The spectral benchmark checks the exact low-rank eigensolver against the former
 ambient `d x d` decomposition. The LEACE benchmark compares thin sample-space
 fitting and factorized application with the legacy dense covariance/projection
-path. These speedups are component measurements, not claims that complete model
-evaluation is equally faster.
+path. The activation benchmark covers indexed sparse application, cached metric
+projectors and best-state/early-stop optimization. These speedups are component
+measurements, not claims that complete model evaluation is equally faster.
 
 For the experimental NF4 adapter path, install the additional `quant` extra
 where bitsandbytes is supported:

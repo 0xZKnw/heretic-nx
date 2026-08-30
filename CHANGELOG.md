@@ -88,6 +88,14 @@ All notable public changes to Heretic NX are documented here.
   256x2,048 binary-concept workload this makes fitting 13.2x faster, application
   9.4x faster and stored output 683x smaller, while removing the dense solver's
   hundreds of spurious numerical-rank directions.
+- Sparse activation operators now compute and scatter only selected output
+  coordinates below the measured density crossover; the 4,096-wide, rank-8,
+  64-coordinate benchmark is 2.44x faster at 512 tokens. Metric projector
+  construction is also bit-identical and 1.73x faster by reusing `M @ Q`.
+- Low-rank matrix optimization now restores its best finite objective instead
+  of returning a degraded terminal step. The regression fixture improves the
+  returned objective by 3.24x; opt-in patience stops at 16/200 steps, retains
+  exactly the same best state and runs about 11x faster.
 
 ### Fixed
 

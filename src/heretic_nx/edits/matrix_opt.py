@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import torch
 from torch import Tensor
@@ -19,6 +20,8 @@ class LowRankOptimizationResult:
     protected_relative_drift: float
     target_separation_ratio: float
     steps: int
+    best_step: int = 0
+    terminal_loss: float | None = None
 
 
 def _low_rank_frobenius_mean(a: Tensor, b: Tensor) -> Tensor:
@@ -56,8 +59,15 @@ def fit_low_rank_matrix_operator(
     protected_weight: float = 4.0,
     operator_weight: float = 0.01,
     seed: int = 0,
+    early_stopping_patience: int | None = None,
+    minimum_delta: float = 0.0,
 ) -> LowRankOptimizationResult:
-    """Fit ``I - beta A B.T`` while penalizing protected activation drift."""
+    """Fit ``I - beta A B.T`` while penalizing protected activation drift.
+
+    The returned operator is always the best finite state observed under the
+    training objective, rather than unconditionally the final optimizer state.
+    Early stopping is opt-in so existing callers retain their iteration budget.
+    """
 
     target = target_activations.float()
     protected = protected_activations.to(device=target.device, dtype=target.dtype)
@@ -67,10 +77,31 @@ def fit_low_rank_matrix_operator(
         raise ValueError("at least two target and protected rows are required")
     if not torch.isfinite(target).all() or not torch.isfinite(protected).all():
         raise ValueError("optimization activations must be finite")
-    if rank < 1 or rank > target.shape[1] or steps < 1 or learning_rate <= 0:
+    if (
+        rank < 1
+        or rank > target.shape[1]
+        or steps < 1
+        or not math.isfinite(learning_rate)
+        or learning_rate <= 0
+    ):
         raise ValueError("rank, steps, or learning_rate is invalid")
-    if protected_weight < 0 or operator_weight < 0:
+    if not math.isfinite(beta) or not 0 <= beta <= 1:
+        raise ValueError("beta must be finite and in [0, 1]")
+    if (
+        not math.isfinite(protected_weight)
+        or not math.isfinite(operator_weight)
+        or protected_weight < 0
+        or operator_weight < 0
+    ):
         raise ValueError("regularization weights must be non-negative")
+    if early_stopping_patience is not None and (
+        isinstance(early_stopping_patience, bool)
+        or not isinstance(early_stopping_patience, int)
+        or early_stopping_patience < 1
+    ):
+        raise ValueError("early_stopping_patience must be positive when provided")
+    if not math.isfinite(minimum_delta) or minimum_delta < 0:
+        raise ValueError("minimum_delta must be finite and non-negative")
 
     generator = torch.Generator(device=target.device).manual_seed(seed)
     target_mean = target.mean(dim=0)
@@ -102,20 +133,55 @@ def fit_low_rank_matrix_operator(
         return loss, protected_loss, separation_loss
 
     initial_loss = float(objective()[0].detach().item())
+    best_loss = initial_loss
+    best_a = a.detach().clone()
+    best_b = b.detach().clone()
+    best_step = 0
+    patience_reference = initial_loss
+    stale_steps = 0
+    performed_steps = 0
+
+    def snapshot_if_better(loss: Tensor, step: int) -> float:
+        nonlocal best_loss, best_a, best_b, best_step
+        loss_value = float(loss.detach().item())
+        if loss_value < best_loss:
+            best_loss = loss_value
+            best_a = a.detach().clone()
+            best_b = b.detach().clone()
+            best_step = step
+        return loss_value
+
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
         loss, _protected_loss, _separation_loss = objective()
         if not torch.isfinite(loss):
             raise RuntimeError("low-rank optimization became non-finite")
+        loss_value = snapshot_if_better(loss, performed_steps)
+        if early_stopping_patience is not None and performed_steps:
+            if loss_value < patience_reference - minimum_delta:
+                patience_reference = loss_value
+                stale_steps = 0
+            else:
+                stale_steps += 1
+                if stale_steps >= early_stopping_patience:
+                    break
         loss.backward()
         torch.nn.utils.clip_grad_norm_((a, b), 1.0)
         optimizer.step()
+        performed_steps += 1
         with torch.no_grad():
             # Bound the spectral scale so beta retains its [0, 1] meaning.
             norm = _low_rank_spectral_norm(a, b).clamp_min(1.0)
             a.div_(norm.sqrt())
             b.div_(norm.sqrt())
 
+    terminal_loss = objective()[0]
+    if not torch.isfinite(terminal_loss):
+        raise RuntimeError("low-rank optimization became non-finite")
+    terminal_loss_value = snapshot_if_better(terminal_loss, performed_steps)
+    with torch.no_grad():
+        a.copy_(best_a)
+        b.copy_(best_b)
     final_loss, protected_loss, separation_loss = objective()
     return LowRankOptimizationResult(
         operator=ActivationOperator(a.detach(), b.detach(), beta),
@@ -123,5 +189,7 @@ def fit_low_rank_matrix_operator(
         final_loss=float(final_loss.detach().item()),
         protected_relative_drift=float(protected_loss.detach().sqrt().item()),
         target_separation_ratio=float(separation_loss.detach().sqrt().item()),
-        steps=steps,
+        steps=performed_steps,
+        best_step=best_step,
+        terminal_loss=terminal_loss_value,
     )
