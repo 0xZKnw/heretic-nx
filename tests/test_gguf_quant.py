@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import types
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,8 @@ from heretic_nx.edits import gguf_quant as gguf_quant_module  # noqa: E402
 from heretic_nx.edits.gguf_quant import (  # noqa: E402
     GGUFQuantizedAblationPlan,
     GGUFQuantizedTensorEdit,
+    _ResolvedEdit,
+    _edit_tensor_payload,
     apply_quantized_gguf_ablation,
     inspect_quantized_gguf,
 )
@@ -83,8 +86,10 @@ def _write_plan(
     target: str = "blk.0.attn_output.weight",
     preserve_original_blocks: bool = True,
     quantization_multipliers: tuple[float, ...] = (0.75, 1.0, 1.25),
+    schema_version: str = "gguf-static-ablation-v3",
 ) -> None:
     GGUFQuantizedAblationPlan(
+        schema_version=schema_version,
         source_sha256=sha256_file(source),
         tensor_artifact_sha256=sha256_file(factors),
         row_chunk_size=2,
@@ -100,6 +105,111 @@ def _write_plan(
             ),
         ),
     ).write(plan)
+
+
+def _edited_payload_for_chunk_size(
+    original: np.ndarray,
+    factor: np.ndarray,
+    qtype: GGMLQuantizationType,
+    *,
+    input_dim: int,
+    row_chunk_size: int,
+    arithmetic_mode: str = "chunk-stable-v1",
+) -> tuple[np.ndarray, dict[str, object]]:
+    registry = (
+        _native_registry()
+        if QUANT_LAYOUTS[qtype.name].requires_native
+        else GGUFQuantizationCodecRegistry(prefer_native=False)
+    )
+    payload = original.copy()
+    tensor = types.SimpleNamespace(
+        tensor_type=qtype,
+        shape=np.array([input_dim, payload.shape[0]]),
+        data=payload,
+        name="chunk-stable.weight",
+    )
+    edit = _ResolvedEdit(
+        tensor_name=tensor.name,
+        expected_quantization=qtype.name,
+        a_key="axis",
+        b_key=None,
+        right_key=None,
+        strength=0.7,
+        preserve_row_norms=True,
+        preserve_original_blocks=True,
+        quantization_multipliers=(0.75, 1.0, 1.25),
+        minimum_block_improvement=0.0,
+        require_payload_change=True,
+        minimum_delta_cosine=None,
+        maximum_delta_relative_error=None,
+        maximum_row_norm_relative_error=None,
+    )
+    try:
+        report = _edit_tensor_payload(
+            tensor,
+            edit,
+            {"axis": factor},
+            registry,
+            row_chunk_size=row_chunk_size,
+            arithmetic_mode=arithmetic_mode,
+        )
+    finally:
+        registry.close()
+    return payload, report
+
+
+@pytest.mark.parametrize("qtype_name", ["Q8_0", "Q4_K"])
+def test_quantized_payload_is_independent_of_streaming_chunk_size(
+    qtype_name: str,
+) -> None:
+    qtype = getattr(GGMLQuantizationType, qtype_name)
+    registry = (
+        _native_registry()
+        if QUANT_LAYOUTS[qtype_name].requires_native
+        else GGUFQuantizationCodecRegistry(prefer_native=False)
+    )
+    generator = np.random.default_rng(271)
+    output_dim, input_dim, rank = 129, 512, 8
+    values = np.ascontiguousarray(
+        generator.normal(scale=0.08, size=(output_dim, input_dim)),
+        dtype=np.float32,
+    )
+    factor = np.ascontiguousarray(
+        generator.normal(size=(output_dim, rank)),
+        dtype=np.float32,
+    )
+    factor /= np.linalg.norm(factor, axis=0, keepdims=True)
+    try:
+        original = registry.quantize_rows(values, qtype)
+    finally:
+        registry.close()
+
+    results = [
+        _edited_payload_for_chunk_size(
+            original,
+            factor,
+            qtype,
+            input_dim=input_dim,
+            row_chunk_size=chunk_size,
+        )
+        for chunk_size in (1, 7, 64, 128)
+    ]
+    reference_payload, reference_report = results[0]
+    for payload, report in results[1:]:
+        np.testing.assert_array_equal(payload, reference_payload)
+        assert (
+            report["after_payload_sha256"]
+            == reference_report["after_payload_sha256"]
+        )
+    legacy_payload, _ = _edited_payload_for_chunk_size(
+        original,
+        factor,
+        qtype,
+        input_dim=input_dim,
+        row_chunk_size=128,
+        arithmetic_mode="legacy-plan-v2",
+    )
+    np.testing.assert_array_equal(reference_payload, legacy_payload)
 
 
 @pytest.mark.parametrize("qtype_name", ["Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K"])
@@ -136,6 +246,35 @@ def test_direct_k_quant_merge_preserves_layout_and_untouched_bytes(
     assert row["quantization_metrics"]["changed_blocks"] > 0
     assert row["quantization_metrics"]["delta_cosine"] > 0
     assert report["output"]["sha256"] == sha256_file(output)
+    assert report["schema_version"] == "gguf-quantized-static-merge-report-v3"
+    assert report["plan"]["schema_version"] == "gguf-static-ablation-v3"
+    assert report["arithmetic_mode"] == "chunk-stable-v1"
+
+
+def test_v2_plan_replays_legacy_arithmetic_mode(tmp_path: Path) -> None:
+    source = tmp_path / "source.gguf"
+    factors = tmp_path / "factors.safetensors"
+    plan = tmp_path / "plan.json"
+    _write_quantized_gguf(source, (GGMLQuantizationType.Q8_0,))
+    save_file({"axis": np.ones(4, dtype=np.float32)}, factors)
+    _write_plan(
+        source,
+        factors,
+        plan,
+        qtype="Q8_0",
+        schema_version="gguf-static-ablation-v2",
+    )
+
+    report = apply_quantized_gguf_ablation(
+        source,
+        None,
+        plan,
+        factors,
+        dry_run=True,
+    )
+
+    assert report["plan"]["schema_version"] == "gguf-static-ablation-v2"
+    assert report["arithmetic_mode"] == "legacy-plan-v2"
 
 
 @pytest.mark.parametrize("qtype_name", ["Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q8_0"])

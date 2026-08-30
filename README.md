@@ -205,6 +205,10 @@ each plan entry declares the exact expected type and fails closed on a mismatch.
 There is no official `Q6_K_S` tensor type in llama.cpp: the corresponding
 weight format is `Q6_K`, which is supported.
 The plan binds both the source GGUF and its safetensors factors by SHA-256.
+New plans use the v3 arithmetic contract: edited payload bytes are independent
+of `row_chunk_size`, so memory tuning cannot silently change a model. Existing
+v2 and Q8 v1 plans retain their historical arithmetic for exact replay; create
+a new v3 plan to opt into chunk-stable output.
 
 ```python
 from heretic_nx.edits import GGUFQuantizedAblationPlan, GGUFQuantizedTensorEdit
@@ -282,6 +286,7 @@ python benchmarks/spectral_compact.py
 python benchmarks/leace_thin.py
 python benchmarks/activation_operator.py
 python benchmarks/sequence_kl_masked.py
+python benchmarks/gguf_chunk_stability.py
 ```
 
 It compares the former dense `d x d` regularization path with the rank-space
@@ -292,9 +297,11 @@ ambient `d x d` decomposition. The LEACE benchmark compares thin sample-space
 fitting and factorized application with the legacy dense covariance/projection
 path. The activation benchmark covers indexed sparse application, cached metric
 projectors and best-state/early-stop optimization. The sequence-KL benchmark
-measures selected-token chunking against full padded probability tensors. These
-speedups are component measurements, not claims that complete model evaluation
-is equally faster.
+measures selected-token chunking against full padded probability tensors. The
+GGUF stability benchmark verifies identical edited payload hashes across stream
+chunk sizes and reports the associated throughput tradeoff. These speedups are
+component measurements, not claims that complete model evaluation is equally
+faster.
 
 For the experimental NF4 adapter path, install the additional `quant` extra
 where bitsandbytes is supported:

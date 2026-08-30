@@ -103,6 +103,10 @@ All notable public changes to Heretic NX are documented here.
 
 ### Fixed
 
+- New v3 GGUF plans now use a canonical projection reduction, making edited
+  payload bytes independent of streaming chunk size. Historical v2 and Q8 v1
+  plans retain their old arithmetic for exact
+  replay instead of being silently reinterpreted.
 - Direct-Q8 PRIME site fitting now enforces the metric geometry decision instead
   of normalizing rejected near-zero residuals into full-strength operators. On
   the retained LFM2.5 8B activation cache, all 48 unsafe sites are now rejected

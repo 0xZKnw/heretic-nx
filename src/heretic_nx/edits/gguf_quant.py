@@ -38,6 +38,12 @@ EditableQuantization = Literal[
     "Q5_1",
     "Q8_0",
 ]
+GGUFArithmeticMode = Literal["legacy-plan-v2", "chunk-stable-v1"]
+
+# Projection reductions are grouped by global row number, never by the plan's
+# streaming chunk size.  This keeps payloads reproducible when operators choose
+# a smaller chunk for memory or a larger chunk for throughput.
+_PROJECTION_REDUCTION_ROWS = 128
 
 
 class GGUFQuantizedTensorEdit(BaseModel):
@@ -92,7 +98,10 @@ class GGUFQuantizedAblationPlan(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal["gguf-static-ablation-v2"] = "gguf-static-ablation-v2"
+    schema_version: Literal[
+        "gguf-static-ablation-v2",
+        "gguf-static-ablation-v3",
+    ] = "gguf-static-ablation-v3"
     source_sha256: str = Field(pattern=SHA256_PATTERN)
     tensor_artifact_sha256: str = Field(pattern=SHA256_PATTERN)
     edits: tuple[GGUFQuantizedTensorEdit, ...] = Field(min_length=1)
@@ -303,10 +312,11 @@ def _resolve_plan(
     tuple[_ResolvedEdit, ...],
     int,
     bool,
+    GGUFArithmeticMode,
 ]:
     document = json.loads(payload)
     schema = document.get("schema_version")
-    if schema == "gguf-static-ablation-v2":
+    if schema in {"gguf-static-ablation-v2", "gguf-static-ablation-v3"}:
         plan = GGUFQuantizedAblationPlan.model_validate(document)
         edits = tuple(
             _ResolvedEdit(
@@ -327,7 +337,18 @@ def _resolve_plan(
             )
             for edit in plan.edits
         )
-        return plan, edits, plan.row_chunk_size, plan.verify_untouched_bytes
+        arithmetic_mode: GGUFArithmeticMode = (
+            "legacy-plan-v2"
+            if schema == "gguf-static-ablation-v2"
+            else "chunk-stable-v1"
+        )
+        return (
+            plan,
+            edits,
+            plan.row_chunk_size,
+            plan.verify_untouched_bytes,
+            arithmetic_mode,
+        )
     if schema == "gguf-q8-ablation-v1":
         plan = GGUFQ8AblationPlan.model_validate(document)
         edits = tuple(
@@ -349,10 +370,10 @@ def _resolve_plan(
             )
             for edit in plan.edits
         )
-        return plan, edits, 128, True
+        return plan, edits, 128, True, "legacy-plan-v2"
     raise ValueError(
-        "unsupported GGUF edit plan schema; expected gguf-static-ablation-v2 "
-        "or gguf-q8-ablation-v1"
+        "unsupported GGUF edit plan schema; expected gguf-static-ablation-v3, "
+        "gguf-static-ablation-v2 or gguf-q8-ablation-v1"
     )
 
 
@@ -521,6 +542,92 @@ def _block_error(values: np.ndarray, target: np.ndarray, block_size: int) -> np.
     return np.sum(np.square(difference), axis=2, dtype=np.float64)
 
 
+def _streaming_projection(
+    bank: np.ndarray,
+    b: np.ndarray,
+    codec: GGUFQuantizationCodecRegistry,
+    qtype: Any,
+    input_dim: int,
+    *,
+    row_chunk_size: int,
+    preserve_row_norms: bool,
+) -> tuple[np.ndarray, int]:
+    """Accumulate ``B.T @ W`` in canonical global-row reduction tiles."""
+
+    output_dim = bank.shape[0]
+    rank = b.shape[1]
+    reduction_rows = min(_PROJECTION_REDUCTION_ROWS, output_dim)
+    pending_b = np.empty((reduction_rows, rank), dtype=np.float32)
+    pending_values = np.empty((reduction_rows, input_dim), dtype=np.float32)
+    pending_count = 0
+    projection = np.zeros((rank, input_dim), dtype=np.float32)
+    workspace_bytes = projection.nbytes + pending_b.nbytes + pending_values.nbytes
+
+    for start in range(0, output_dim, row_chunk_size):
+        stop = min(start + row_chunk_size, output_dim)
+        base = codec.dequantize_rows(bank[start:stop], qtype, input_dim)
+        projected = _normalized_rows(base)[0] if preserve_row_norms else base
+        workspace_bytes = max(
+            workspace_bytes,
+            projection.nbytes
+            + pending_b.nbytes
+            + pending_values.nbytes
+            + base.nbytes
+            + (0 if projected is base else projected.nbytes),
+        )
+        offset = 0
+        while offset < projected.shape[0]:
+            copied = min(
+                reduction_rows - pending_count,
+                projected.shape[0] - offset,
+            )
+            pending_b[pending_count : pending_count + copied] = b[
+                start + offset : start + offset + copied
+            ]
+            pending_values[pending_count : pending_count + copied] = projected[
+                offset : offset + copied
+            ]
+            pending_count += copied
+            offset += copied
+            if pending_count == reduction_rows:
+                projection += pending_b.T @ pending_values
+                pending_count = 0
+    if pending_count:
+        projection += (
+            pending_b[:pending_count].T @ pending_values[:pending_count]
+        )
+    return projection, workspace_bytes
+
+
+def _legacy_streaming_projection(
+    bank: np.ndarray,
+    b: np.ndarray,
+    codec: GGUFQuantizationCodecRegistry,
+    qtype: Any,
+    input_dim: int,
+    *,
+    row_chunk_size: int,
+    preserve_row_norms: bool,
+) -> tuple[np.ndarray, int]:
+    """Replay the chunk-dependent arithmetic shipped with v2 plans."""
+
+    output_dim = bank.shape[0]
+    projection = np.zeros((b.shape[1], input_dim), dtype=np.float32)
+    workspace_bytes = projection.nbytes
+    for start in range(0, output_dim, row_chunk_size):
+        stop = min(start + row_chunk_size, output_dim)
+        base = codec.dequantize_rows(bank[start:stop], qtype, input_dim)
+        projected = _normalized_rows(base)[0] if preserve_row_norms else base
+        projection += b[start:stop].T @ projected
+        workspace_bytes = max(
+            workspace_bytes,
+            projection.nbytes
+            + base.nbytes
+            + (0 if projected is base else projected.nbytes),
+        )
+    return projection, workspace_bytes
+
+
 def _edit_tensor_payload(
     tensor: Any,
     edit: _ResolvedEdit,
@@ -528,7 +635,10 @@ def _edit_tensor_payload(
     codec: GGUFQuantizationCodecRegistry,
     *,
     row_chunk_size: int,
+    arithmetic_mode: GGUFArithmeticMode = "chunk-stable-v1",
 ) -> dict[str, object]:
+    if arithmetic_mode not in {"legacy-plan-v2", "chunk-stable-v1"}:
+        raise ValueError(f"unsupported GGUF arithmetic mode: {arithmetic_mode}")
     qtype = tensor.tensor_type
     layout = QUANT_LAYOUTS[qtype.name]
     logical_shape = tuple(int(value) for value in reversed(tensor.shape.tolist()))
@@ -577,14 +687,23 @@ def _edit_tensor_payload(
     for bank_index in range(matrix_count):
         bank = encoded_banks[bank_index]
         projection: np.ndarray | None = None
+        projection_workspace_bytes = 0
         if right is None:
             assert b is not None
-            projection = np.zeros((a.shape[1], input_dim), dtype=np.float32)
-            for start in range(0, output_dim, row_chunk_size):
-                stop = min(start + row_chunk_size, output_dim)
-                base = codec.dequantize_rows(bank[start:stop], qtype, input_dim)
-                projected = _normalized_rows(base)[0] if edit.preserve_row_norms else base
-                projection += b[start:stop].T @ projected
+            projection_function = (
+                _legacy_streaming_projection
+                if arithmetic_mode == "legacy-plan-v2"
+                else _streaming_projection
+            )
+            projection, projection_workspace_bytes = projection_function(
+                bank,
+                b,
+                codec,
+                qtype,
+                input_dim,
+                row_chunk_size=row_chunk_size,
+                preserve_row_norms=edit.preserve_row_norms,
+            )
 
         for start in range(0, output_dim, row_chunk_size):
             stop = min(start + row_chunk_size, output_dim)
@@ -592,9 +711,17 @@ def _edit_tensor_payload(
             base = codec.dequantize_rows(original_raw, qtype, input_dim)
             if right is None:
                 assert projection is not None
-                delta = a[start:stop] @ projection
+                delta = (
+                    a[start:stop] @ projection
+                    if arithmetic_mode == "legacy-plan-v2"
+                    else np.matmul(a[start:stop], projection, dtype=np.float32)
+                )
             else:
-                delta = a[start:stop] @ right.T
+                delta = (
+                    a[start:stop] @ right.T
+                    if arithmetic_mode == "legacy-plan-v2"
+                    else np.matmul(a[start:stop], right.T, dtype=np.float32)
+                )
             target = _edited_from_delta(
                 base,
                 delta,
@@ -613,7 +740,8 @@ def _edit_tensor_payload(
                 )
                 choices = np.full((base.shape[0], blocks_per_row), -2, dtype=np.int16)
 
-            workspace_bytes = (
+            workspace_bytes = max(
+                projection_workspace_bytes,
                 base.nbytes
                 + delta.nbytes
                 + target.nbytes
@@ -621,7 +749,7 @@ def _edit_tensor_payload(
                 + selected_raw.nbytes
                 + best_error.nbytes
                 + choices.nbytes
-                + (projection.nbytes if projection is not None else 0)
+                + (projection.nbytes if projection is not None else 0),
             )
             for multiplier_index, multiplier in enumerate(edit.quantization_multipliers):
                 candidate = (
@@ -671,6 +799,7 @@ def _edit_tensor_payload(
                     + best_error.nbytes
                     + choices.nbytes
                     + (projection.nbytes if projection is not None else 0),
+                    projection_workspace_bytes,
                 )
 
             if bool((choices == -2).any()):
@@ -924,7 +1053,13 @@ def apply_quantized_gguf_ablation(
 
     plan_payload = plan_file.read_bytes()
     plan_sha256 = hashlib.sha256(plan_payload).hexdigest()
-    plan, edits, row_chunk_size, verify_untouched = _resolve_plan(plan_payload)
+    (
+        plan,
+        edits,
+        row_chunk_size,
+        verify_untouched,
+        arithmetic_mode,
+    ) = _resolve_plan(plan_payload)
     # A real merge validates the immutable copied snapshot below. Hashing the
     # mutable source first would add a complete, redundant multi-gigabyte scan.
     # Dry-runs have no snapshot, so they still validate the source directly.
@@ -1011,7 +1146,7 @@ def apply_quantized_gguf_ablation(
         )
 
     report: dict[str, Any] = {
-        "schema_version": "gguf-quantized-static-merge-report-v2",
+        "schema_version": "gguf-quantized-static-merge-report-v3",
         "source": {
             "path": str(source),
             "sha256": source_sha256,
@@ -1025,6 +1160,7 @@ def apply_quantized_gguf_ablation(
         "tensor_artifact": {"path": str(tensor_file), "sha256": tensor_sha256},
         "codec": codec.provenance(),
         "row_chunk_size": row_chunk_size,
+        "arithmetic_mode": arithmetic_mode,
         "verify_untouched_bytes": verify_untouched,
         "search_only": not verify_untouched,
         "dry_run": dry_run,
@@ -1092,6 +1228,7 @@ def apply_quantized_gguf_ablation(
                 factors,
                 codec,
                 row_chunk_size=row_chunk_size,
+                arithmetic_mode=arithmetic_mode,
             )
             result_rows.append(
                 {
