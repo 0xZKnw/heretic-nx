@@ -4,19 +4,24 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+from pathlib import Path
 import platform
 import statistics
+import tempfile
 import time
 
 import numpy as np
 import torch
 
 from heretic_nx.edits.gguf_codecs import GGUFQuantizationCodecRegistry
+from heretic_nx.edits.gguf_quant import _file_and_untouched_sha256
 from heretic_nx.edits.matrix_opt import (
     _low_rank_frobenius_mean,
     _low_rank_spectral_norm,
 )
+from heretic_nx.hashing import sha256_file
 
 
 def median_seconds(function, repeats: int) -> float:
@@ -30,6 +35,60 @@ def median_seconds(function, repeats: int) -> float:
     return statistics.median(timings)
 
 
+def legacy_two_pass_hashes(
+    path: Path,
+    intervals: tuple[tuple[int, int], ...],
+    *,
+    chunk_size: int = 8 * 1024 * 1024,
+) -> tuple[str, str]:
+    full = sha256_file(path)
+    untouched = hashlib.sha256()
+    file_size = path.stat().st_size
+    with path.open("rb") as handle:
+        cursor = 0
+        for start, stop in (*intervals, (file_size, file_size)):
+            handle.seek(cursor)
+            remaining = start - cursor
+            while remaining:
+                chunk = handle.read(min(chunk_size, remaining))
+                if not chunk:
+                    raise RuntimeError("benchmark file ended unexpectedly")
+                untouched.update(chunk)
+                remaining -= len(chunk)
+            cursor = stop
+    return full, untouched.hexdigest()
+
+
+def legacy_verification_cycle(
+    path: Path,
+    intervals: tuple[tuple[int, int], ...],
+) -> tuple[str, str]:
+    """Model the six integrity scans used before the one-pass merger."""
+
+    source_sha256 = sha256_file(path)
+    snapshot_sha256, untouched_before = legacy_two_pass_hashes(path, intervals)
+    _final_sha256, untouched_after = legacy_two_pass_hashes(path, intervals)
+    published_sha256 = sha256_file(path)
+    if untouched_after != untouched_before:
+        raise RuntimeError("legacy untouched digest changed")
+    if source_sha256 != snapshot_sha256:
+        raise RuntimeError("legacy source and snapshot digests differ")
+    return snapshot_sha256, published_sha256
+
+
+def combined_verification_cycle(
+    path: Path,
+    intervals: tuple[tuple[int, int], ...],
+) -> tuple[str, str]:
+    """Model the two integrity scans used by the optimized merger."""
+
+    snapshot = _file_and_untouched_sha256(path, intervals)
+    final = _file_and_untouched_sha256(path, intervals)
+    if final.untouched_sha256 != snapshot.untouched_sha256:
+        raise RuntimeError("combined untouched digest changed")
+    return snapshot.sha256, final.sha256
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dimension", type=int, default=2048)
@@ -38,6 +97,8 @@ def main() -> None:
     parser.add_argument("--dense-repeats", type=int, default=3)
     parser.add_argument("--codec-rows", type=int, default=1024)
     parser.add_argument("--codec-input-dim", type=int, default=4096)
+    parser.add_argument("--io-bytes", type=int, default=64 * 1024 * 1024)
+    parser.add_argument("--io-repeats", type=int, default=3)
     parser.add_argument("--ggml-library")
     args = parser.parse_args()
     if min(
@@ -47,6 +108,8 @@ def main() -> None:
         args.dense_repeats,
         args.codec_rows,
         args.codec_input_dim,
+        args.io_bytes,
+        args.io_repeats,
     ) < 1:
         raise ValueError("benchmark dimensions and repeats must be positive")
     if args.rank > args.dimension:
@@ -84,6 +147,34 @@ def main() -> None:
             "speedup": dense / compact,
         },
     }
+
+    with tempfile.TemporaryDirectory(prefix="heretic-nx-io-bench-") as directory:
+        io_path = Path(directory) / "synthetic.gguf"
+        with io_path.open("wb") as handle:
+            handle.truncate(args.io_bytes)
+        intervals = (
+            (args.io_bytes // 4, args.io_bytes // 4 + args.io_bytes // 16),
+            (args.io_bytes // 2, args.io_bytes // 2 + args.io_bytes // 8),
+        )
+        expected = legacy_two_pass_hashes(io_path, intervals)
+        combined = _file_and_untouched_sha256(io_path, intervals)
+        if expected != (combined.sha256, combined.untouched_sha256):
+            raise RuntimeError("combined I/O digests differ from the legacy baseline")
+        legacy_seconds = median_seconds(
+            lambda: legacy_verification_cycle(io_path, intervals),
+            args.io_repeats,
+        )
+        combined_seconds = median_seconds(
+            lambda: combined_verification_cycle(io_path, intervals),
+            args.io_repeats,
+        )
+        report["integrity_io"] = {
+            "file_bytes": args.io_bytes,
+            "legacy_six_scan_median_seconds": legacy_seconds,
+            "combined_two_scan_median_seconds": combined_seconds,
+            "speedup": legacy_seconds / combined_seconds,
+            "digests_match": True,
+        }
 
     try:
         from gguf import GGMLQuantizationType

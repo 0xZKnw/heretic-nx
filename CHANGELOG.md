@@ -17,7 +17,7 @@ All notable public changes to Heretic NX are documented here.
   attestation and rejection of identical base/candidate bytes.
 - Rank-space low-rank optimizer statistics and opt-in bounded-batch Frequent
   Directions compression.
-- Pinned libggml K-codec coverage in CI, atomic no-clobber publication and
+- Native libggml K-codec coverage, atomic no-clobber publication and
   snapshot-bound source/factor/plan verification.
 - Refusal-cap early termination for frontier screening, while keeping full
   104-row reports mandatory before KL certification.
@@ -62,6 +62,14 @@ All notable public changes to Heretic NX are documented here.
 - The stronger Heretic-wide arm has a higher observed target-refusal count than
   Residual-Stream, but the paired target-superiority interval still crosses zero.
 - The comparison is model-specific and does not claim universal engine superiority or third-party certification.
+
+### Performance
+
+- GGUF source, untouched-region and final-output integrity digests now share
+  sequential scans and publication verifies the already-hashed inode. This
+  cuts a real merge from six full/partial verification scans to two without
+  weakening source binding or undeclared-byte checks; the reproducible 128 MiB
+  microbenchmark is 1.72x faster on the reference Mac.
 
 ## 0.2.0 — 2026-08-24
 

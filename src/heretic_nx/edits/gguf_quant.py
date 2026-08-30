@@ -283,6 +283,19 @@ class _ErrorAccumulator:
         }
 
 
+@dataclass(frozen=True)
+class _FileHashSnapshot:
+    """Content digests tied to one stable file identity."""
+
+    sha256: str
+    untouched_sha256: str
+    size_bytes: int
+    device: int
+    inode: int
+    mtime_ns: int
+    ctime_ns: int
+
+
 def _resolve_plan(
     payload: bytes,
 ) -> tuple[
@@ -757,29 +770,68 @@ def _validate_tensor_payload_layout(reader: Any, file_size: int) -> None:
         previous_name = name
 
 
-def _untouched_bytes_sha256(
+def _file_and_untouched_sha256(
     path: Path,
     intervals: tuple[tuple[int, int], ...],
     *,
     chunk_size: int = 8 * 1024 * 1024,
-) -> str:
-    """Hash every byte outside target payloads in one immutable snapshot."""
+) -> _FileHashSnapshot:
+    """Hash the complete file and all untouched regions in one sequential pass."""
 
-    digest = hashlib.sha256()
-    file_size = path.stat().st_size
+    if chunk_size < 1:
+        raise ValueError("chunk_size must be positive")
+    full_digest = hashlib.sha256()
+    untouched_digest = hashlib.sha256()
     with path.open("rb") as handle:
+        before = os.fstat(handle.fileno())
+        file_size = before.st_size
+        ordered_intervals = _validated_intervals(file_size, list(intervals))
         cursor = 0
-        for start, stop in (*intervals, (file_size, file_size)):
-            handle.seek(cursor)
-            remaining = start - cursor
-            while remaining:
-                chunk = handle.read(min(chunk_size, remaining))
+        for start, stop in (*ordered_intervals, (file_size, file_size)):
+            untouched_remaining = start - cursor
+            while untouched_remaining:
+                chunk = handle.read(min(chunk_size, untouched_remaining))
                 if not chunk:
                     raise RuntimeError("GGUF ended while hashing untouched bytes")
-                digest.update(chunk)
-                remaining -= len(chunk)
+                full_digest.update(chunk)
+                untouched_digest.update(chunk)
+                untouched_remaining -= len(chunk)
+            targeted_remaining = stop - start
+            while targeted_remaining:
+                chunk = handle.read(min(chunk_size, targeted_remaining))
+                if not chunk:
+                    raise RuntimeError("GGUF ended while hashing a target payload")
+                full_digest.update(chunk)
+                targeted_remaining -= len(chunk)
             cursor = stop
-    return digest.hexdigest()
+        if handle.read(1):
+            raise RuntimeError("GGUF grew while it was being hashed")
+        after = os.fstat(handle.fileno())
+    identity_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    identity_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if identity_after != identity_before:
+        raise RuntimeError("GGUF changed while it was being hashed")
+    return _FileHashSnapshot(
+        sha256=full_digest.hexdigest(),
+        untouched_sha256=untouched_digest.hexdigest(),
+        size_bytes=after.st_size,
+        device=after.st_dev,
+        inode=after.st_ino,
+        mtime_ns=after.st_mtime_ns,
+        ctime_ns=after.st_ctime_ns,
+    )
 
 
 def _fsync_directory(path: Path) -> None:
@@ -801,10 +853,20 @@ def _publish_output(
     output: Path,
     *,
     force: bool,
+    expected: _FileHashSnapshot | None = None,
 ) -> str:
-    """Publish atomically, preserving a concurrently-created output by default."""
+    """Publish atomically and prove the already-hashed inode was installed."""
 
-    expected_sha256 = sha256_file(temporary)
+    if expected is None:
+        expected = _file_and_untouched_sha256(temporary, ())
+    temporary_stat = temporary.stat()
+    if (
+        temporary_stat.st_dev != expected.device
+        or temporary_stat.st_ino != expected.inode
+        or temporary_stat.st_size != expected.size_bytes
+        or temporary_stat.st_mtime_ns != expected.mtime_ns
+    ):
+        raise RuntimeError("temporary GGUF changed after final hashing")
     if force:
         os.replace(temporary, output)
     else:
@@ -816,13 +878,15 @@ def _publish_output(
             ) from error
         temporary.unlink()
     _fsync_directory(output.parent)
-    actual_sha256 = sha256_file(output)
-    if actual_sha256 != expected_sha256:
-        raise RuntimeError(
-            f"published GGUF hash changed unexpectedly: {actual_sha256} != "
-            f"{expected_sha256}"
-        )
-    return actual_sha256
+    output_stat = output.stat()
+    if (
+        output_stat.st_dev != expected.device
+        or output_stat.st_ino != expected.inode
+        or output_stat.st_size != expected.size_bytes
+        or output_stat.st_mtime_ns != expected.mtime_ns
+    ):
+        raise RuntimeError("published GGUF is not the verified temporary inode")
+    return expected.sha256
 
 
 def apply_quantized_gguf_ablation(
@@ -861,11 +925,16 @@ def apply_quantized_gguf_ablation(
     plan_payload = plan_file.read_bytes()
     plan_sha256 = hashlib.sha256(plan_payload).hexdigest()
     plan, edits, row_chunk_size, verify_untouched = _resolve_plan(plan_payload)
-    source_sha256 = sha256_file(source)
-    if source_sha256 != plan.source_sha256:
-        raise RuntimeError(
-            f"source GGUF hash mismatch: {source_sha256} != {plan.source_sha256}"
-        )
+    # A real merge validates the immutable copied snapshot below. Hashing the
+    # mutable source first would add a complete, redundant multi-gigabyte scan.
+    # Dry-runs have no snapshot, so they still validate the source directly.
+    source_sha256 = plan.source_sha256
+    if dry_run:
+        source_sha256 = sha256_file(source)
+        if source_sha256 != plan.source_sha256:
+            raise RuntimeError(
+                f"source GGUF hash mismatch: {source_sha256} != {plan.source_sha256}"
+            )
     tensor_payload = tensor_file.read_bytes()
     tensor_sha256 = hashlib.sha256(tensor_payload).hexdigest()
     if tensor_sha256 != plan.tensor_artifact_sha256:
@@ -984,12 +1053,6 @@ def apply_quantized_gguf_ablation(
     temporary = Path(temporary_name)
     try:
         _copy_source(source, temporary)
-        snapshot_sha256 = sha256_file(temporary)
-        if snapshot_sha256 != source_sha256:
-            raise RuntimeError(
-                "source GGUF changed while its immutable edit snapshot was created: "
-                f"{snapshot_sha256} != {source_sha256}"
-            )
         intervals = _validated_intervals(
             temporary.stat().st_size,
             [
@@ -1000,8 +1063,17 @@ def apply_quantized_gguf_ablation(
                 for row in prepared
             ],
         )
+        snapshot_hashes = _file_and_untouched_sha256(
+            temporary,
+            intervals if verify_untouched else (),
+        )
+        if snapshot_hashes.sha256 != source_sha256:
+            raise RuntimeError(
+                "source GGUF changed while its immutable edit snapshot was created: "
+                f"{snapshot_hashes.sha256} != {source_sha256}"
+            )
         untouched_before = (
-            _untouched_bytes_sha256(temporary, intervals)
+            snapshot_hashes.untouched_sha256
             if verify_untouched
             else None
         )
@@ -1059,13 +1131,21 @@ def apply_quantized_gguf_ablation(
         del reopened
         gc.collect()
 
+        final_hashes = _file_and_untouched_sha256(
+            temporary,
+            intervals if verify_untouched else (),
+        )
         if verify_untouched:
-            untouched_after = _untouched_bytes_sha256(temporary, intervals)
-            if untouched_after != untouched_before:
+            if final_hashes.untouched_sha256 != untouched_before:
                 raise RuntimeError("GGUF bytes changed outside declared tensor payloads")
-            report["untouched_bytes_sha256"] = untouched_after
+            report["untouched_bytes_sha256"] = final_hashes.untouched_sha256
         report["untouched_bytes_verified"] = verify_untouched
-        published_sha256 = _publish_output(temporary, output, force=force)
+        published_sha256 = _publish_output(
+            temporary,
+            output,
+            force=force,
+            expected=final_hashes,
+        )
         report["dry_run"] = False
         report["edits"] = result_rows
         report["output"] = {

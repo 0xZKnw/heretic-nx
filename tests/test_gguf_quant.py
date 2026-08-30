@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -217,15 +218,62 @@ def test_no_force_publish_preserves_concurrently_created_output(
     _write_plan(source, factors, plan, qtype="Q4_K")
     original_publish = gguf_quant_module._publish_output
 
-    def racing_publish(temporary: Path, destination: Path, *, force: bool) -> str:
+    def racing_publish(
+        temporary: Path,
+        destination: Path,
+        *,
+        force: bool,
+        expected=None,
+    ) -> str:
         destination.write_bytes(b"concurrent-writer")
-        return original_publish(temporary, destination, force=force)
+        return original_publish(
+            temporary,
+            destination,
+            force=force,
+            expected=expected,
+        )
 
     monkeypatch.setattr(gguf_quant_module, "_publish_output", racing_publish)
 
     with pytest.raises(FileExistsError, match="concurrently-created"):
         apply_quantized_gguf_ablation(source, output, plan, factors)
     assert output.read_bytes() == b"concurrent-writer"
+
+
+def test_combined_file_hash_matches_independent_region_hashes(tmp_path: Path) -> None:
+    path = tmp_path / "payload.bin"
+    payload = bytes(range(251)) * 17
+    path.write_bytes(payload)
+    intervals = ((31, 217), (901, 1703))
+
+    snapshot = gguf_quant_module._file_and_untouched_sha256(
+        path,
+        intervals,
+        chunk_size=37,
+    )
+    untouched = payload[:31] + payload[217:901] + payload[1703:]
+
+    assert snapshot.sha256 == hashlib.sha256(payload).hexdigest()
+    assert snapshot.untouched_sha256 == hashlib.sha256(untouched).hexdigest()
+    assert snapshot.size_bytes == len(payload)
+    assert snapshot.inode == path.stat().st_ino
+
+
+def test_publish_rejects_file_changed_after_final_hash(tmp_path: Path) -> None:
+    temporary = tmp_path / "temporary.gguf"
+    output = tmp_path / "output.gguf"
+    temporary.write_bytes(b"before")
+    snapshot = gguf_quant_module._file_and_untouched_sha256(temporary, ())
+    temporary.write_bytes(b"after-with-a-different-size")
+
+    with pytest.raises(RuntimeError, match="changed after final hashing"):
+        gguf_quant_module._publish_output(
+            temporary,
+            output,
+            force=False,
+            expected=snapshot,
+        )
+    assert not output.exists()
 
 
 def test_min_drift_block_selection_never_worsens_target_error(tmp_path: Path) -> None:
