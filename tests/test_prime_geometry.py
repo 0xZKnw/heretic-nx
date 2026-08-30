@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 import heretic_nx.geometry.metric as metric_module
+import heretic_nx.geometry.principal_angles as principal_angles_module
 from heretic_nx.geometry.consensus import grassmann_consensus
 from heretic_nx.geometry.contrastive import fit_contrastive_axis
 from heretic_nx.geometry.fisher import fisher_factor_from_gradients
@@ -94,6 +95,25 @@ def test_metric_gate_reuses_precomputed_metric_bases(monkeypatch) -> None:
     result = MetricGeometryGate().evaluate(target, protected, metric)
 
     assert calls == 3  # target, protected, and the residual; no repeated angle fit
+    assert torch.isfinite(result.editable_basis).all()
+
+
+def test_euclidean_gate_reuses_precomputed_bases(monkeypatch) -> None:
+    generator = torch.Generator().manual_seed(110)
+    target = torch.randn(32, 4, generator=generator)
+    protected = torch.randn(32, 3, generator=generator)
+    original = principal_angles_module.orthonormal_basis
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(principal_angles_module, "orthonormal_basis", counted)
+    result = principal_angles_module.GeometryGate().evaluate(target, protected)
+
+    assert calls == 3  # target, protected, and projected residual
     assert torch.isfinite(result.editable_basis).all()
 
 

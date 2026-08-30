@@ -71,6 +71,9 @@ All notable public changes to Heretic NX are documented here.
 
 ### Performance
 
+- Euclidean geometry gates now reuse target/protected bases for projection and
+  principal angles instead of fitting them up to twice. The 4,096-dimensional
+  rank-16 reference gate is bit-exact and 1.63x faster.
 - Metric geometry gates now reuse their M-orthonormal target/protected bases
   and cross-Gram matrix for residualization and principal angles. The
   4,096-dimensional, 512-factor, rank-16 reference gate is bit-exact and 1.49x

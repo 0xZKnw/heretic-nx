@@ -53,11 +53,24 @@ class GeometryGate:
 
     def evaluate(self, target: Tensor, protected: Tensor) -> GeometryGateResult:
         target_basis = orthonormal_basis(target)
-        projected = project_out(target_basis, protected)
+        protected_basis = orthonormal_basis(protected)
+        projected = (
+            target_basis - protected_basis @ (protected_basis.T @ target_basis)
+            if protected_basis.shape[1]
+            else target_basis.clone()
+        )
         editable = orthonormal_basis(projected)
         target_energy = target_basis.square().sum().clamp_min(torch.finfo(target.dtype).eps)
         retained = float((projected.square().sum() / target_energy).item())
-        minimum_angle = float(principal_angles_deg(protected, target_basis).min().item())
+        if protected_basis.shape[1] == 0 or target_basis.shape[1] == 0:
+            minimum_angle = 90.0
+        else:
+            cosines = torch.linalg.svdvals(
+                protected_basis.T @ target_basis
+            ).clamp(0, 1)
+            minimum_angle = float(
+                torch.rad2deg(torch.acos(cosines)).min().item()
+            )
 
         if minimum_angle <= self.reject_below_deg or retained < self.reject_energy_below:
             decision = "reject-site"
