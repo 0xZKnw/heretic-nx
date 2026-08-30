@@ -7,6 +7,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import re
 import time
 from typing import Any
 
@@ -21,14 +22,29 @@ from experiments.lfm25_2p6b_residual_stream import (
     normalized_response,
     render,
 )
-from heretic_nx.eval.gguf_runtime import lm_studio_completion, native_completion
-from heretic_nx.hashing import canonical_json, sha256_json
+from heretic_nx.data.research_splits import (
+    REFUSAL_NORMALIZER_V1,
+    build_research_split,
+    refusal_marker_rule_sha256,
+    subset_research_split,
+    verify_manifest_texts,
+)
+from heretic_nx.eval.gguf_runtime import (
+    attest_native_model,
+    lm_studio_completion,
+    native_completion,
+    require_native_model_identity,
+)
+from heretic_nx.hashing import canonical_json, sha256_file, sha256_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKENIZER_PATH = ROOT / "checkpoints" / "lfm25-8b-a1b"
 RUN_DIR = ROOT / "runs" / "lfm25-8b-a1b-q8-direct"
 BATCH_SIZE = 8
+POOL_ROWS = 400
+SPLIT_SEED = 20260830
+MARKER_RULE_SHA256 = refusal_marker_rule_sha256(REFUSAL_MARKERS)
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -42,9 +58,18 @@ def main() -> None:
     parser.add_argument("--label", required=True)
     parser.add_argument("--endpoint", default="http://127.0.0.1:1236")
     parser.add_argument("--api", choices=("native", "openai"), default="native")
+    parser.add_argument(
+        "--phase",
+        choices=("geometry", "selection", "public-report"),
+        default="public-report",
+    )
+    parser.add_argument("--artifact", type=Path)
+    parser.add_argument("--artifact-sha256")
+    parser.add_argument("--pool-rows", type=int, default=POOL_ROWS)
+    parser.add_argument("--split-seed", type=int, default=SPLIT_SEED)
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--start", type=int, default=0)
-    parser.add_argument("--stop", type=int, default=104)
+    parser.add_argument("--stop", type=int)
     parser.add_argument(
         "--indices",
         help="comma-separated one-based row indices; overrides start/stop",
@@ -54,41 +79,115 @@ def main() -> None:
     args = parser.parse_args()
     if args.parallel <= 0:
         raise ValueError("parallel must be positive")
-    if not 0 <= args.start < args.stop <= 104:
-        raise ValueError("evaluation bounds must satisfy 0 <= start < stop <= 104")
+    if args.pool_rows <= 0:
+        raise ValueError("pool-rows must be positive")
+    if (
+        args.artifact_sha256 is not None
+        and re.fullmatch(r"[0-9a-f]{64}", args.artifact_sha256) is None
+    ):
+        raise ValueError("artifact-sha256 must be a lowercase SHA-256")
+    if args.api == "native" and args.artifact is None:
+        raise ValueError("native evaluation requires --artifact for attestation")
+    if args.api == "openai" and args.phase != "public-report":
+        raise ValueError(
+            "unattested OpenAI-compatible evaluation is public-report only"
+        )
+    if args.api == "openai" and args.artifact is None and args.artifact_sha256 is None:
+        raise ValueError("openai evaluation requires --artifact or --artifact-sha256")
     selected_indices = None
     if args.indices is not None:
+        if args.phase != "public-report":
+            raise ValueError("explicit official row indices are public-report only")
         try:
             selected_indices = [int(value) - 1 for value in args.indices.split(",")]
         except ValueError as error:
-            raise ValueError("indices must be comma-separated one-based integers") from error
+            raise ValueError(
+                "indices must be comma-separated one-based integers"
+            ) from error
         if (
             not selected_indices
             or len(selected_indices) != len(set(selected_indices))
             or min(selected_indices) < 0
-            or max(selected_indices) >= 104
         ):
-            raise ValueError("indices must be unique values between 1 and 104")
+            raise ValueError("indices must be unique positive one-based values")
+
+    runtime_model = None
+    if args.api == "native":
+        assert args.artifact is not None
+        runtime_model = attest_native_model(
+            args.endpoint,
+            args.artifact,
+            expected_model=args.model,
+        )
+        artifact_sha256 = str(runtime_model["artifact_sha256"])
+        if (
+            args.artifact_sha256 is not None
+            and args.artifact_sha256 != artifact_sha256
+        ):
+            raise RuntimeError("attested artifact does not match --artifact-sha256")
+        artifact_attested = True
+    else:
+        artifact_sha256 = (
+            sha256_file(args.artifact)
+            if args.artifact is not None
+            else str(args.artifact_sha256)
+        )
+        if (
+            args.artifact_sha256 is not None
+            and args.artifact_sha256 != artifact_sha256
+        ):
+            raise RuntimeError("local artifact does not match --artifact-sha256")
+        artifact_attested = False
 
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
-    rows = load_dataset(BAD_DATASET, revision=BAD_REVISION, split="test")
-    row_indices = (
-        selected_indices
-        if selected_indices is not None
-        else list(range(args.start, args.stop))
+    source_split = "test" if args.phase == "public-report" else "train"
+    dataset_split = (
+        "test" if source_split == "test" else f"train[:{args.pool_rows}]"
     )
-    raw_prompts = [str(rows[index]["text"]) for index in row_indices]
+    rows = load_dataset(BAD_DATASET, revision=BAD_REVISION, split=dataset_split)
+    pool = [str(row["text"]) for row in rows]
+    full_manifest = build_research_split(
+        pool,
+        purpose=args.phase,
+        dataset_id=BAD_DATASET,
+        revision=BAD_REVISION,
+        source_split=source_split,
+        seed=args.split_seed,
+    )
+    stop = len(full_manifest.rows) if args.stop is None else args.stop
+    if selected_indices is not None:
+        positions = selected_indices
+        bounds = None
+    else:
+        if not 0 <= args.start < stop <= len(full_manifest.rows):
+            raise ValueError(
+                "evaluation bounds must select rows inside the frozen split"
+            )
+        positions = list(range(args.start, stop))
+        bounds = [args.start, stop]
+    manifest = subset_research_split(full_manifest, positions)
+    raw_prompts = verify_manifest_texts(manifest, pool)
     rendered = render(tokenizer, raw_prompts, close_think=True)
     prompt_tokens = [
         tokenizer.encode(prompt, add_special_tokens=False) for prompt in rendered
     ]
     expected = {
-        "schema_version": "lfm25-8b-a1b-q8-refusal-partial-v1",
+        "schema_version": "lfm25-8b-a1b-q8-refusal-partial-v2",
         "model": args.model,
+        "artifact_sha256": artifact_sha256,
+        "artifact_attested": artifact_attested,
+        "runtime_model": runtime_model,
         "label": args.label,
-        "bounds": [args.start, args.stop] if selected_indices is None else None,
-        "row_indices_one_based": [index + 1 for index in row_indices],
+        "purpose": args.phase,
+        "bounds": bounds,
+        "source_indices_one_based": [row.source_index + 1 for row in manifest.rows],
+        "split_manifest_sha256": manifest.sha256,
+        "full_split_manifest_sha256": full_manifest.sha256,
+        "full_split_count": len(full_manifest.rows),
         "prompt_tokens_sha256": sha256_json(prompt_tokens),
+        "refusal_markers": list(REFUSAL_MARKERS),
+        "refusal_normalizer": REFUSAL_NORMALIZER_V1,
+        "marker_rule_sha256": MARKER_RULE_SHA256,
         "max_new_tokens": args.max_new_tokens,
         "api": args.api,
     }
@@ -163,25 +262,66 @@ def main() -> None:
         int(any(marker in normalized_response(text) for marker in REFUSAL_MARKERS))
         for text in responses
     ]
+    if runtime_model is not None:
+        require_native_model_identity(
+            args.endpoint,
+            runtime_model,
+            verify_artifact_hash=True,
+        )
+    complete = len(responses) == len(manifest.rows)
+    suite_complete = (
+        complete
+        and manifest.sha256 == full_manifest.sha256
+        and len(manifest.rows) == len(full_manifest.rows)
+    )
     report = {
-        "schema_version": "lfm25-8b-a1b-q8-refusal-v1",
+        "schema_version": "lfm25-8b-a1b-q8-refusal-v2",
         "model": args.model,
+        "artifact_sha256": artifact_sha256,
+        "artifact_attested": artifact_attested,
+        "runtime_model": runtime_model,
         "label": args.label,
         "endpoint": args.endpoint,
-        "dataset": {"id": BAD_DATASET, "revision": BAD_REVISION},
+        "dataset": {
+            "id": BAD_DATASET,
+            "revision": BAD_REVISION,
+            "source_split": source_split,
+        },
+        "split_manifest": manifest.to_dict(),
+        "split_manifest_sha256": manifest.sha256,
+        "full_split_manifest": full_manifest.to_dict(),
+        "full_split_manifest_sha256": full_manifest.sha256,
         "protocol": {
-            "bounds": [args.start, args.stop] if selected_indices is None else None,
-            "row_indices_one_based": [index + 1 for index in row_indices],
+            "schema_version": expected["schema_version"],
+            "model": args.model,
+            "artifact_sha256": artifact_sha256,
+            "artifact_attested": artifact_attested,
+            "purpose": args.phase,
+            "bounds": bounds,
+            "source_indices_one_based": [
+                row.source_index + 1 for row in manifest.rows
+            ],
+            "split_manifest_sha256": manifest.sha256,
+            "full_split_manifest_sha256": full_manifest.sha256,
+            "full_split_count": len(full_manifest.rows),
             "close_think": True,
             "max_new_tokens": args.max_new_tokens,
             "temperature": -1,
             "api": args.api,
             "prompt_tokens_sha256": expected["prompt_tokens_sha256"],
-            "refusal_markers": REFUSAL_MARKERS,
+            "refusal_markers": list(REFUSAL_MARKERS),
+            "refusal_normalizer": REFUSAL_NORMALIZER_V1,
+            "marker_rule_sha256": MARKER_RULE_SHA256,
         },
         "count": len(responses),
+        "expected_count": len(manifest.rows),
+        "complete": complete,
+        "suite_complete": suite_complete,
         "refusal_markers": sum(hits),
         "marker_hits": hits,
+        "evidence_sha256": sha256_json(
+            {"marker_hits": hits, "responses": responses}
+        ),
         "response_sha256": sha256_json(responses),
         "seconds": float(checkpoint["seconds"]),
         "responses_per_second": len(responses)
