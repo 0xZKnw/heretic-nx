@@ -83,6 +83,11 @@ All notable public changes to Heretic NX are documented here.
   At dimension 2,048 and factor rank 8, the reproducible benchmark reduces the
   tracked working representation from 16 MiB to 128 KiB and runs about 700x
   faster while matching eigenvalues within `8.94e-8`.
+- LEACE now fits in the thin sample space and keeps the affine eraser factorized,
+  materializing the historical dense projection only on explicit access. On a
+  256x2,048 binary-concept workload this makes fitting 13.2x faster, application
+  9.4x faster and stored output 683x smaller, while removing the dense solver's
+  hundreds of spurious numerical-rank directions.
 
 ### Fixed
 

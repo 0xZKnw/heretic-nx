@@ -39,6 +39,22 @@ def affine_operator_from_leace(
 ) -> AffineActivationOperator:
     """Factor an exact LEACE affine map into an activation-native operator."""
 
+    erase_left = eraser.erase_left
+    erase_right = eraser.erase_right
+    if erase_left is not None and erase_right is not None:
+        if erase_left.ndim != 2 or erase_left.shape != erase_right.shape:
+            raise ValueError(
+                "LEACE factors must have the same (dimension, rank) shape"
+            )
+        return AffineActivationOperator(
+            ActivationOperator(
+                a=erase_left.float(),
+                b=erase_right.float(),
+                beta=beta,
+            ),
+            eraser.bias.float(),
+        )
+
     projection = eraser.projection.float()
     if projection.ndim != 2 or projection.shape[0] != projection.shape[1]:
         raise ValueError("LEACE projection must be square")
