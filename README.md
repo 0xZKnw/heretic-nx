@@ -281,6 +281,7 @@ python benchmarks/gguf_codec_parallel.py
 python benchmarks/spectral_compact.py
 python benchmarks/leace_thin.py
 python benchmarks/activation_operator.py
+python benchmarks/sequence_kl_masked.py
 ```
 
 It compares the former dense `d x d` regularization path with the rank-space
@@ -290,8 +291,10 @@ The spectral benchmark checks the exact low-rank eigensolver against the former
 ambient `d x d` decomposition. The LEACE benchmark compares thin sample-space
 fitting and factorized application with the legacy dense covariance/projection
 path. The activation benchmark covers indexed sparse application, cached metric
-projectors and best-state/early-stop optimization. These speedups are component
-measurements, not claims that complete model evaluation is equally faster.
+projectors and best-state/early-stop optimization. The sequence-KL benchmark
+measures selected-token chunking against full padded probability tensors. These
+speedups are component measurements, not claims that complete model evaluation
+is equally faster.
 
 For the experimental NF4 adapter path, install the additional `quant` extra
 where bitsandbytes is supported:

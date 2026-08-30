@@ -10,6 +10,12 @@ import torch
 from torch import Tensor
 
 
+# Keep each floating-point row buffer near 64 MiB for float32 logits.  The KL
+# kernel uses at most a small fixed number of these buffers instead of
+# materializing full [batch, token, vocabulary] probability tensors.
+_KL_CHUNK_TARGET_ELEMENTS = 16 * 1024 * 1024
+
+
 @dataclass(frozen=True)
 class PairedInterval:
     count: int
@@ -176,14 +182,26 @@ def paired_bootstrap_interval(
     )
 
 
+@torch.inference_mode()
 def teacher_forced_sequence_kl(
     baseline_logits: Tensor,
     candidate_logits: Tensor,
     token_mask: Tensor,
     *,
     top_k: int = 128,
+    token_chunk_size: int | None = None,
 ) -> SequenceDrift:
-    """Compute full-vocabulary KL on every selected teacher-forced token."""
+    """Compute full-vocabulary KL on every selected teacher-forced token.
+
+    Padding and other unselected positions are never passed through softmax.
+    Selected rows are processed in bounded chunks and the two log-probability
+    buffers are reused in place.  This keeps the calculation exact while
+    avoiding several full ``[batch, token, vocabulary]`` intermediates.
+
+    ``token_chunk_size=None`` chooses a vocabulary-aware working set.  The
+    optional override is primarily useful for constrained evaluators and
+    reproducibility tests; it does not change the resulting metric.
+    """
 
     if (
         baseline_logits.ndim != 3
@@ -197,32 +215,94 @@ def teacher_forced_sequence_kl(
         or baseline_logits.device != token_mask.device
     ):
         raise ValueError("sequence KL tensors must be on the same device")
-    if (
-        not torch.isfinite(baseline_logits).all()
-        or not torch.isfinite(candidate_logits).all()
-    ):
-        raise ValueError("sequence KL logits must be finite")
-    if top_k < 1:
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1:
         raise ValueError("top_k must be positive")
-    top_k = min(top_k, baseline_logits.shape[-1])
+    if token_chunk_size is not None and (
+        isinstance(token_chunk_size, bool)
+        or not isinstance(token_chunk_size, int)
+        or token_chunk_size < 1
+    ):
+        raise ValueError("token_chunk_size must be positive")
+    vocabulary_size = baseline_logits.shape[-1]
+    if vocabulary_size < 1:
+        raise ValueError("sequence KL vocabulary must be non-empty")
+    top_k = min(top_k, vocabulary_size)
     mask = token_mask.bool()
     if not mask.any():
         raise ValueError("token_mask must select at least one token")
-    base_log_probs = torch.log_softmax(baseline_logits.float(), dim=-1)
-    candidate_log_probs = torch.log_softmax(candidate_logits.float(), dim=-1)
-    base_probs = base_log_probs.exp()
-    per_token = torch.sum(base_probs * (base_log_probs - candidate_log_probs), dim=-1)
-    selected = per_token[mask]
+
+    # ``isfinite`` over a giant logits tensor allocates a same-shaped boolean
+    # temporary.  Finite extrema provide the same fail-closed validation with
+    # scalar outputs and no vocabulary-sized allocation.
+    base_minimum, base_maximum = torch.aminmax(baseline_logits)
+    candidate_minimum, candidate_maximum = torch.aminmax(candidate_logits)
+    finite_extrema = (
+        torch.isfinite(base_minimum)
+        & torch.isfinite(base_maximum)
+        & torch.isfinite(candidate_minimum)
+        & torch.isfinite(candidate_maximum)
+    )
+    if not bool(finite_extrema):
+        raise ValueError("sequence KL logits must be finite")
+
+    if token_chunk_size is None:
+        token_chunk_size = max(1, _KL_CHUNK_TARGET_ELEMENTS // vocabulary_size)
+
+    # ``nonzero`` is row-major, so chunks retain sequence and token order.  Use
+    # two-dimensional advanced indexing instead of reshaping logits: the latter
+    # could silently copy an entire non-contiguous model output.
+    selected_positions = mask.nonzero(as_tuple=False)
+    selected_count = selected_positions.shape[0]
+    selected_kl = torch.empty(
+        selected_count,
+        device=baseline_logits.device,
+        dtype=torch.float32,
+    )
+    selected_top_mass = torch.empty_like(selected_kl)
+    for start in range(0, selected_count, token_chunk_size):
+        stop = min(start + token_chunk_size, selected_count)
+        positions = selected_positions[start:stop]
+        rows = positions[:, 0]
+        tokens = positions[:, 1]
+        base_log_probs = torch.log_softmax(
+            baseline_logits[rows, tokens].float(),
+            dim=-1,
+        )
+        candidate_log_probs = torch.log_softmax(
+            candidate_logits[rows, tokens].float(),
+            dim=-1,
+        )
+
+        # Top-k values are sufficient for mass coverage; retaining indices and
+        # gathering from a separate full probability tensor is unnecessary.
+        selected_top_mass[start:stop] = (
+            torch.topk(base_log_probs, k=top_k, dim=-1)
+            .values.exp()
+            .sum(dim=-1)
+        )
+
+        # Reuse the two private selected-row buffers: candidate_log_probs holds
+        # log(p)-log(q), then base_log_probs becomes p.
+        candidate_log_probs.neg_().add_(base_log_probs)
+        base_log_probs.exp_()
+        selected_kl[start:stop] = torch.sum(
+            base_log_probs * candidate_log_probs,
+            dim=-1,
+        )
+
     counts = mask.sum(dim=1)
-    valid_sequences = counts > 0
-    sequence_means = (per_token * mask).sum(dim=1)[valid_sequences] / counts[valid_sequences]
-    top_indices = torch.topk(base_log_probs, k=top_k, dim=-1).indices
-    top_mass = torch.gather(base_probs, -1, top_indices).sum(dim=-1)[mask]
+    sequence_means = torch.stack(
+        [
+            values.mean()
+            for values in selected_kl.split(counts.tolist())
+            if values.numel() > 0
+        ]
+    )
     return SequenceDrift(
-        token_count=int(mask.sum().item()),
-        mean_token_kl=float(selected.mean().item()),
+        token_count=selected_count,
+        mean_token_kl=float(selected_kl.mean().item()),
         maximum_sequence_kl=float(sequence_means.max().item()),
-        mean_topk_mass_coverage=float(top_mass.mean().item()),
+        mean_topk_mass_coverage=float(selected_top_mass.mean().item()),
     )
 
 

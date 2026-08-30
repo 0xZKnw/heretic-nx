@@ -96,6 +96,10 @@ All notable public changes to Heretic NX are documented here.
   of returning a degraded terminal step. The regression fixture improves the
   returned objective by 3.24x; opt-in patience stops at 16/200 steps, retains
   exactly the same best state and runs about 11x faster.
+- Teacher-forced sequence KL now skips padding before softmax and processes
+  selected rows in vocabulary-aware chunks with reusable buffers. At 56.25%
+  token density the reference metric is exactly unchanged, runs 1.66x faster
+  and reduces estimated metric workspace by at least 15.8x.
 
 ### Fixed
 

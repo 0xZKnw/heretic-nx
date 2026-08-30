@@ -32,6 +32,82 @@ def test_teacher_forced_sequence_kl_uses_all_selected_tokens() -> None:
     assert 0 < drift.mean_topk_mass_coverage <= 1
 
 
+def test_teacher_forced_sequence_kl_matches_full_tensor_reference_when_chunked() -> None:
+    generator = torch.Generator().manual_seed(167)
+    baseline = torch.randn(4, 9, 31, generator=generator)
+    candidate = baseline + 0.1 * torch.randn(4, 9, 31, generator=generator)
+    mask = torch.tensor(
+        [
+            [True, True, False, False, False, False, False, False, False],
+            [False, False, True, True, True, False, False, False, False],
+            [True, False, True, False, True, False, True, False, True],
+            [True, True, True, True, True, True, True, True, False],
+        ]
+    )
+    top_k = 7
+
+    base_log_probs = torch.log_softmax(baseline.float(), dim=-1)
+    candidate_log_probs = torch.log_softmax(candidate.float(), dim=-1)
+    base_probs = base_log_probs.exp()
+    per_token = torch.sum(
+        base_probs * (base_log_probs - candidate_log_probs),
+        dim=-1,
+    )
+    counts = mask.sum(dim=1)
+    expected_sequence_means = (per_token * mask).sum(dim=1) / counts
+    top_indices = torch.topk(base_log_probs, k=top_k, dim=-1).indices
+    expected_top_mass = torch.gather(base_probs, -1, top_indices).sum(dim=-1)[mask]
+
+    for chunk_size in (1, 3, 1_000):
+        drift = teacher_forced_sequence_kl(
+            baseline,
+            candidate,
+            mask,
+            top_k=top_k,
+            token_chunk_size=chunk_size,
+        )
+        assert drift.token_count == int(mask.sum())
+        assert drift.mean_token_kl == pytest.approx(
+            float(per_token[mask].mean()), abs=1e-8
+        )
+        assert drift.maximum_sequence_kl == pytest.approx(
+            float(expected_sequence_means.max()), abs=1e-8
+        )
+        assert drift.mean_topk_mass_coverage == pytest.approx(
+            float(expected_top_mass.mean()), abs=1e-8
+        )
+
+
+def test_teacher_forced_sequence_kl_preserves_fail_closed_validation() -> None:
+    baseline = torch.zeros(2, 3, 5)
+    candidate = baseline.clone()
+    mask = torch.tensor([[True, False, False], [False, True, False]])
+    baseline[0, 2, 0] = float("nan")
+
+    with pytest.raises(ValueError, match="logits must be finite"):
+        teacher_forced_sequence_kl(baseline, candidate, mask)
+    with pytest.raises(ValueError, match="token_chunk_size must be positive"):
+        teacher_forced_sequence_kl(
+            torch.zeros_like(baseline),
+            candidate,
+            mask,
+            token_chunk_size=0,
+        )
+    with pytest.raises(ValueError, match="token_chunk_size must be positive"):
+        teacher_forced_sequence_kl(
+            torch.zeros_like(baseline),
+            candidate,
+            mask,
+            token_chunk_size=1.5,  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="vocabulary must be non-empty"):
+        teacher_forced_sequence_kl(
+            torch.empty(2, 3, 0),
+            torch.empty(2, 3, 0),
+            mask,
+        )
+
+
 def test_sequence_drift_handles_left_and_right_padding() -> None:
     class Batch(dict):
         def to(self, device):
