@@ -71,6 +71,11 @@ All notable public changes to Heretic NX are documented here.
 
 ### Performance
 
+- Directory provenance hashing now reads independent model shards with a
+  deterministic two-worker pipeline while preserving canonical path order and
+  the exact historical digest. A real 9.6 GB two-shard model hashes 1.86x
+  faster on the reference Mac; a separate 8.3 GB four-component model hashes
+  1.63x faster, with bounded 16 MiB default read buffers.
 - Residual-stream capability protection now transfers each layer's safe/target
   diagnostics to CPU once and reuses the safe mean. The 8-layer,
   256x2,048 reference fit is bit-exact and 1.12x faster on CPU, while a GPU
