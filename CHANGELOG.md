@@ -105,6 +105,10 @@ All notable public changes to Heretic NX are documented here.
   reference Mac, batched durable writes are 22.3x faster and the complete
   cascade/cache path is 8.5x faster; external judge latency remains dominant
   when a model call is required.
+- Raw-logit KL artifacts are now hashed and numerically validated in one file
+  pass with reusable row workspaces. On a 104x128,000 float32 artifact, this is
+  1.77x faster and reduces estimated validation workspace by 5.46x while
+  preserving the SHA and mapped values exactly.
 
 ### Fixed
 
@@ -112,6 +116,9 @@ All notable public changes to Heretic NX are documented here.
   conflicting concurrent verdicts, malformed JSON and non-finite payloads fail
   closed. Task-specific success is included in cache identity so a success
   verdict cannot leak into the same prompt/response judged without that signal.
+- Raw KL validation now checks file identity before and after its scan and maps
+  the already-hashed descriptor, preventing a concurrent pathname replacement
+  from swapping the returned artifact after verification.
 - New v3 GGUF plans now use a canonical projection reduction, making edited
   payload bytes independent of streaming chunk size. Historical v2 and Q8 v1
   plans retain their old arithmetic for exact

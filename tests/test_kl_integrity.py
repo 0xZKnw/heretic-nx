@@ -98,6 +98,25 @@ def test_first_token_kl_renormalizes_float32_rows() -> None:
     assert first_token_kl(base, base) == pytest.approx(0.0, abs=1e-12)
 
 
+def test_first_token_kl_keeps_noncontiguous_inputs_immutable() -> None:
+    base_storage = np.log(
+        np.array([0.6, 9.0, 0.3, 9.0, 0.1, 9.0], dtype=np.float64)
+    )
+    candidate_storage = np.log(
+        np.array([0.5, 8.0, 0.35, 8.0, 0.15, 8.0], dtype=np.float64)
+    )
+    base = base_storage[::2]
+    candidate = candidate_storage[::2]
+    before_base = base_storage.copy()
+    before_candidate = candidate_storage.copy()
+
+    value = first_token_kl(base, candidate)
+
+    assert value > 0.0
+    np.testing.assert_array_equal(base_storage, before_base)
+    np.testing.assert_array_equal(candidate_storage, before_candidate)
+
+
 def test_log_probability_artifact_rejects_incomplete_progress(
     tmp_path: Path,
 ) -> None:
@@ -302,3 +321,77 @@ def test_load_completed_raw_logits_rejects_preallocated_zero_row(
             count=COUNT,
             vocab_size=VOCAB_SIZE,
         )
+
+
+def test_load_completed_raw_logits_rejects_non_finite_row(tmp_path: Path) -> None:
+    data_path = tmp_path / "candidate.raw.bin"
+    progress_path = tmp_path / "candidate.raw.progress.json"
+    np.array([[1.0, 2.0, 3.0], [3.0, np.inf, -1.0]], dtype=np.float32).tofile(
+        data_path
+    )
+    _write_progress(progress_path, _raw_progress(data_path))
+
+    with pytest.raises(RuntimeError, match="non-finite raw logits.*row 1"):
+        load_completed_raw_logits(
+            data_path,
+            progress_path,
+            schema_version=RAW_SCHEMA,
+            count=COUNT,
+            vocab_size=VOCAB_SIZE,
+        )
+
+
+def test_load_completed_raw_logits_keeps_extreme_mass_check_fail_closed(
+    tmp_path: Path,
+) -> None:
+    data_path = tmp_path / "candidate.raw.bin"
+    progress_path = tmp_path / "candidate.raw.progress.json"
+    maximum = np.finfo(np.float32).max
+    np.array(
+        [[1.0, 2.0, 3.0], [maximum, maximum, 0.0]], dtype=np.float32
+    ).tofile(data_path)
+    _write_progress(progress_path, _raw_progress(data_path))
+
+    with pytest.raises(RuntimeError, match="invalid normalized.*row 1"):
+        load_completed_raw_logits(
+            data_path,
+            progress_path,
+            schema_version=RAW_SCHEMA,
+            count=COUNT,
+            vocab_size=VOCAB_SIZE,
+        )
+
+
+def test_load_completed_raw_logits_maps_the_hashed_inode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_path = tmp_path / "candidate.raw.bin"
+    replacement_path = tmp_path / "replacement.raw.bin"
+    progress_path = tmp_path / "candidate.raw.progress.json"
+    expected = np.array(
+        [[1.0, 2.0, 3.0], [3.0, 1.0, -1.0]], dtype=np.float32
+    )
+    replacement = expected + 10.0
+    expected.tofile(data_path)
+    replacement.tofile(replacement_path)
+    _write_progress(progress_path, _raw_progress(data_path))
+    real_memmap = np.memmap
+
+    def replace_path_before_mapping(file: object, *args: object, **kwargs: object):
+        assert hasattr(file, "fileno")
+        replacement_path.replace(data_path)
+        return real_memmap(file, *args, **kwargs)
+
+    monkeypatch.setattr(np, "memmap", replace_path_before_mapping)
+    matrix, _ = load_completed_raw_logits(
+        data_path,
+        progress_path,
+        schema_version=RAW_SCHEMA,
+        count=COUNT,
+        vocab_size=VOCAB_SIZE,
+    )
+
+    np.testing.assert_array_equal(matrix, expected)
+    np.testing.assert_array_equal(
+        np.fromfile(data_path, dtype=np.float32), replacement.ravel()
+    )
