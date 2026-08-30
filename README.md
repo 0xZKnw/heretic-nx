@@ -270,13 +270,15 @@ The optimizer/backend microbenchmark is reproducible with:
 ```powershell
 python benchmarks/backend_microbench.py
 python benchmarks/gguf_codec_parallel.py
+python benchmarks/spectral_compact.py
 ```
 
 It compares the former dense `d x d` regularization path with the rank-space
 implementation and times native Q4_K/Q6_K codecs. The dedicated codec benchmark
 checks bit identity and reports Q2_K through Q6_K scaling across worker counts.
-These speedups are component measurements, not claims that complete model
-evaluation is equally faster.
+The spectral benchmark checks the exact low-rank eigensolver against the former
+ambient `d x d` decomposition. These speedups are component measurements, not
+claims that complete model evaluation is equally faster.
 
 For the experimental NF4 adapter path, install the additional `quant` extra
 where bitsandbytes is supported:

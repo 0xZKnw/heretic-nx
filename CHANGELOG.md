@@ -75,6 +75,11 @@ All notable public changes to Heretic NX are documented here.
   16 MiB reference workload, Q2_K through Q6_K encode roughly 4.0x–5.1x faster
   with eight workers; a complete Q4_K edit kernel is 2.92x faster with identical
   payload and report metrics.
+- Signed spectral fitting now diagonalizes only the joined target/protected
+  factor span instead of allocating and decomposing an ambient `d x d` matrix.
+  At dimension 2,048 and factor rank 8, the reproducible benchmark reduces the
+  tracked working representation from 16 MiB to 128 KiB and runs about 700x
+  faster while matching eigenvalues within `8.94e-8`.
 
 ### Fixed
 
