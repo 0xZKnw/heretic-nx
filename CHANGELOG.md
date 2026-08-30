@@ -71,6 +71,9 @@ All notable public changes to Heretic NX are documented here.
 
 ### Performance
 
+- Low-rank metric calibration now converts BF16 activation matrices to FP32
+  once instead of materializing the same conversion twice. The 1,024x4,096
+  reference fit is bit-exact, 1.17x faster and removes one 16 MiB temporary.
 - Euclidean geometry gates now reuse target/protected bases for projection and
   principal angles instead of fitting them up to twice. The 4,096-dimensional
   rank-16 reference gate is bit-exact and 1.63x faster.

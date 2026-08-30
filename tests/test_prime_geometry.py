@@ -152,6 +152,22 @@ def test_metric_rejects_non_finite_and_mixed_device_inputs() -> None:
         raise AssertionError("non-finite metric calibration must fail")
 
 
+def test_metric_bfloat16_samples_are_converted_once_without_numeric_drift() -> None:
+    generator = torch.Generator().manual_seed(111)
+    samples = torch.randn(48, 24, generator=generator).bfloat16()
+    values = samples.float()
+    centered = values - values.mean(dim=0)
+    expected = LowRankMetric.from_factors(
+        samples.shape[1],
+        covariance_factor=centered.T / (samples.shape[0] - 1) ** 0.5,
+    )
+
+    actual = LowRankMetric.from_samples(samples)
+
+    assert torch.equal(actual.diagonal, expected.diagonal)
+    assert torch.equal(actual.factors, expected.factors)
+
+
 def test_contrastive_axis_is_stable_and_safe_mean_orthogonal() -> None:
     generator = torch.Generator().manual_seed(113)
     safe_mean = torch.tensor([2.0, 0.0, 0.0, 0.0])

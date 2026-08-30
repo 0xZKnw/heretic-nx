@@ -106,7 +106,8 @@ class LowRankMetric:
             raise ValueError("at least two activation rows are required")
         if not torch.isfinite(activations).all():
             raise ValueError("activations must be finite")
-        centered = activations.float() - activations.float().mean(dim=0)
+        values = activations.float()
+        centered = values - values.mean(dim=0)
         covariance_factor = centered.T / (activations.shape[0] - 1) ** 0.5
         return cls.from_factors(
             activations.shape[1],
