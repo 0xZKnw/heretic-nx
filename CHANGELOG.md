@@ -24,6 +24,9 @@ All notable public changes to Heretic NX are documented here.
 - Content-addressed refusal-first evaluation scheduling with immutable replay
   cache, group-aware split isolation, semantic-versus-lexical verdict separation,
   exact partial-KL pruning and a matched-protocol refusal/KL Pareto frontier.
+- Thread-safe end-to-end phase timing and measured portfolio ETA bounds,
+  including explicit geometry/build work, cache savings, failures, overlap and
+  a single-winner public-report barrier.
 - Direct, bounded-memory Q8_0 GGUF static merging with hash-bound ablation
   plans, row-norm preservation, atomic output replacement and stacked MoE
   expert-bank support.
@@ -109,6 +112,10 @@ All notable public changes to Heretic NX are documented here.
   pass with reusable row workspaces. On a 104x128,000 float32 artifact, this is
   1.77x faster and reduces estimated validation workspace by 5.46x while
   preserving the SHA and mapped values exactly.
+- Refusal-first candidate waves can use bounded independent runtime slots while
+  preserving a global stage barrier. The synthetic eight-candidate/four-slot
+  I/O benchmark is 3.95x faster than serial; this deliberately does not claim
+  equivalent scaling for one model on one GPU.
 
 ### Fixed
 

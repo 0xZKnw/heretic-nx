@@ -271,6 +271,15 @@ the cap; and permits public-test reporting only after the capability gate.
 Lexical marker hits remain a separately reported proxy and never become a
 semantic refusal verdict by themselves.
 
+`RunTimingProfiler` records cold work, immutable-cache hits, failures, active
+wall time and overlapping task time per phase. `plan_refusal_first_wave` keeps
+candidate portfolios behind a global refusal-first barrier, while
+`estimate_portfolio_eta` reports measured P50/P90-cost scheduling bounds. A
+genuinely end-to-end forecast can include serial geometry and artifact-build
+units explicitly; unknown phase costs fail closed instead of being counted as
+zero. Parallel workers must represent independent runtime slots. One model on
+one GPU should normally use one worker.
+
 KL collection now takes the GGUF path with `--artifact`, attests the running
 llama.cpp server through `/props`, hashes the local artifact before and after
 collection, and records the runtime build/type in each checkpoint. Comparisons
@@ -289,6 +298,7 @@ python benchmarks/sequence_kl_masked.py
 python benchmarks/gguf_chunk_stability.py
 python benchmarks/judge_cache_batch.py
 python benchmarks/kl_integrity.py
+python benchmarks/eval_portfolio_timing.py
 ```
 
 It compares the former dense `d x d` regularization path with the rank-space
@@ -305,8 +315,10 @@ chunk sizes and reports the associated throughput tradeoff. The judge-cache
 benchmark compares durable verdict-by-verdict writes with explicit atomic
 batching through `JudgeCascade.judge_many`. The KL-integrity benchmark compares
 the historical two-pass raw-logit check with one-pass validation bound to the
-hashed file descriptor. These speedups are component measurements, not claims
-that complete model evaluation is equally faster.
+hashed file descriptor. The portfolio benchmark measures bounded scheduling
+only with independent synthetic I/O slots; it is not a single-GPU inference
+claim. These speedups are component measurements, not claims that complete
+model evaluation is equally faster.
 
 For the experimental NF4 adapter path, install the additional `quant` extra
 where bitsandbytes is supported:
