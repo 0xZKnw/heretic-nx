@@ -148,13 +148,15 @@ def protect_residual_stream_axes(
         if float(residual_norm) <= tolerance:
             raise RuntimeError(f"protected residual axis collapsed at layer {layer}")
         unit = F.normalize(residual, dim=0)
-        safe_centered = safe_values.cpu() - safe_values.cpu().mean(dim=0)
+        safe_cpu = safe_values.cpu()
+        target_cpu = target_values.cpu()
+        safe_mean = safe_cpu.mean(dim=0)
+        safe_centered = safe_cpu - safe_mean
         safe_coefficients = safe_centered @ unit
-        target_delta = target_values.cpu().mean(dim=0) - safe_values.cpu().mean(dim=0)
+        target_delta = target_cpu.mean(dim=0) - safe_mean
         safe_rms = float(safe_coefficients.square().mean().sqrt())
         separation = abs(float(torch.dot(target_delta, unit)))
         efficiency = separation / max(safe_rms, tolerance)
-        safe_mean = safe_values.cpu().mean(dim=0)
         safe_mean_norm = torch.linalg.vector_norm(safe_mean)
         safe_mean_cosine = (
             float(torch.dot(unit, safe_mean / safe_mean_norm))
