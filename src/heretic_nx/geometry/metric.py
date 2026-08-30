@@ -126,7 +126,8 @@ def metric_orthonormal_basis(
     basis = orthonormal_basis(matrix.float(), tolerance=tolerance)
     if basis.shape[1] == 0:
         return basis
-    gram = (metric.gram(basis) + metric.gram(basis).T) / 2
+    metric_gram = metric.gram(basis)
+    gram = (metric_gram + metric_gram.T) / 2
     eigenvalues, eigenvectors = torch.linalg.eigh(gram)
     threshold = tolerance * eigenvalues.abs().max().clamp_min(torch.finfo(gram.dtype).eps)
     keep = eigenvalues > threshold
@@ -194,13 +195,17 @@ class MetricGeometryGate:
             gram = metric.gram(protected_basis)
             cross = protected_basis.T @ metric.apply(target_basis)
             raw = target_basis - protected_basis @ torch.linalg.solve(gram, cross)
+            cosines = torch.linalg.svdvals(cross).clamp(0, 1)
+            minimum_angle = float(
+                torch.rad2deg(torch.acos(cosines)).min().item()
+            )
         else:
             raw = target_basis
+            minimum_angle = 90.0
         retained = float(
             (torch.trace(raw.T @ metric.apply(raw)) / target_basis.shape[1]).item()
         )
         editable = metric_orthonormal_basis(raw, metric)
-        minimum_angle = float(metric_principal_angles_deg(protected, target, metric).min().item())
         if minimum_angle <= self.reject_below_deg or retained < self.reject_energy_below:
             decision = "reject-site"
         elif minimum_angle > self.static_min_deg and retained >= self.static_energy_min:

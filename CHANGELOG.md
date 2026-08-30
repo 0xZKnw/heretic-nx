@@ -71,6 +71,10 @@ All notable public changes to Heretic NX are documented here.
 
 ### Performance
 
+- Metric geometry gates now reuse their M-orthonormal target/protected bases
+  and cross-Gram matrix for residualization and principal angles. The
+  4,096-dimensional, 512-factor, rank-16 reference gate is bit-exact and 1.49x
+  faster, directly reducing architecture-independent site-screening cost.
 - Disposable quantized search artifacts can defer float64 realized-drift
   diagnostics while retaining identical encoded payloads, target hashes and
   final artifact hashes. The 2,048x4,096 rank-8 kernels are 3.09x faster for

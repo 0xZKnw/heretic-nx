@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 
+import heretic_nx.geometry.metric as metric_module
 from heretic_nx.geometry.consensus import grassmann_consensus
 from heretic_nx.geometry.contrastive import fit_contrastive_axis
 from heretic_nx.geometry.fisher import fisher_factor_from_gradients
@@ -72,6 +73,28 @@ def test_metric_residualization_is_m_orthogonal() -> None:
     )
     result = MetricGeometryGate().evaluate(target, protected, metric)
     assert 0 <= result.retained_energy <= 1.0001
+
+
+def test_metric_gate_reuses_precomputed_metric_bases(monkeypatch) -> None:
+    generator = torch.Generator().manual_seed(108)
+    metric = LowRankMetric.from_samples(
+        torch.randn(40, 12, generator=generator)
+    )
+    target = torch.randn(12, 3, generator=generator)
+    protected = torch.randn(12, 2, generator=generator)
+    original = metric_module.metric_orthonormal_basis
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(metric_module, "metric_orthonormal_basis", counted)
+    result = MetricGeometryGate().evaluate(target, protected, metric)
+
+    assert calls == 3  # target, protected, and the residual; no repeated angle fit
+    assert torch.isfinite(result.editable_basis).all()
 
 
 def test_leace_removes_linear_cross_covariance() -> None:
