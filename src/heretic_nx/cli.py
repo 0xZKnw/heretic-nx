@@ -126,6 +126,14 @@ def main() -> None:
     ablate_gguf_parser.add_argument("--ggml-library", type=Path)
     ablate_gguf_parser.add_argument("--dry-run", action="store_true")
     ablate_gguf_parser.add_argument("--force", action="store_true")
+    ablate_gguf_parser.add_argument(
+        "--fast-search",
+        action="store_true",
+        help=(
+            "defer float drift diagnostics for an exact disposable search "
+            "artifact; requires verify_untouched_bytes=false in the plan"
+        ),
+    )
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -207,6 +215,7 @@ def main() -> None:
             dry_run=args.dry_run,
             force=args.force,
             ggml_library=args.ggml_library,
+            fast_search=args.fast_search,
         )
         rendered = json.dumps(report, indent=2, sort_keys=True)
         report_path = args.report

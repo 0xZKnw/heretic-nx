@@ -39,6 +39,7 @@ EditableQuantization = Literal[
     "Q8_0",
 ]
 GGUFArithmeticMode = Literal["legacy-plan-v2", "chunk-stable-v1"]
+GGUFDiagnosticsMode = Literal["full", "search"]
 
 # Projection reductions are grouped by global row number, never by the plan's
 # streaming chunk size.  This keeps payloads reproducible when operators choose
@@ -291,6 +292,74 @@ class _ErrorAccumulator:
             "delta_relative_error": delta_relative_error,
             "row_norm_relative_rms": row_norm_rms,
             "maximum_row_norm_relative_error": self.maximum_row_norm_relative_error,
+            "total_blocks": self.total_blocks,
+            "changed_blocks": self.changed_blocks,
+            "changed_block_fraction": (
+                self.changed_blocks / self.total_blocks if self.total_blocks else 0.0
+            ),
+            "changed_bytes": self.changed_bytes,
+            "quantization_choices": dict(sorted(self.choices.items())),
+            "tracked_chunk_array_bytes_lower_bound": (
+                self.tracked_chunk_array_bytes_lower_bound
+            ),
+        }
+
+
+@dataclass
+class _SearchAccumulator:
+    """Collect only payload-selection facts for disposable search artifacts.
+
+    Full quantization diagnostics repeatedly traverse decoded float matrices in
+    float64. Those measurements are valuable for the frozen winner, but they do
+    not influence encoded bytes when an edit has no metric gate. A refusal-first
+    search can retain exact payload selection and byte provenance while deferring
+    expensive drift metrics to the mandatory full rebuild of its winner.
+    """
+
+    total_blocks: int = 0
+    changed_blocks: int = 0
+    changed_bytes: int = 0
+    tracked_chunk_array_bytes_lower_bound: int = 0
+    choices: Counter[str] = field(default_factory=Counter)
+
+    def update(
+        self,
+        *,
+        original_raw: np.ndarray,
+        selected_raw: np.ndarray,
+        choice_indices: np.ndarray,
+        multipliers: tuple[float, ...],
+        type_size: int,
+        workspace_bytes: int,
+    ) -> None:
+        original_blocks = original_raw.reshape(original_raw.shape[0], -1, type_size)
+        selected_blocks = selected_raw.reshape(selected_raw.shape[0], -1, type_size)
+        changed = np.any(original_blocks != selected_blocks, axis=2)
+        self.total_blocks += changed.size
+        self.changed_blocks += int(np.count_nonzero(changed))
+        self.changed_bytes += int(np.count_nonzero(original_raw != selected_raw))
+        for value, count in zip(
+            *np.unique(choice_indices, return_counts=True), strict=True
+        ):
+            label = "original" if int(value) < 0 else f"x{multipliers[int(value)]:g}"
+            self.choices[label] += int(count)
+        self.tracked_chunk_array_bytes_lower_bound = max(
+            self.tracked_chunk_array_bytes_lower_bound,
+            workspace_bytes,
+        )
+
+    def report(self) -> dict[str, object]:
+        return {
+            # Keep stable keys but make deferred measurements unavailable
+            # instead of manufacturing zeros that could be mistaken for gates.
+            "target_approximation_rmse": None,
+            "target_approximation_relative_l2_error": None,
+            "maximum_absolute_target_error": None,
+            "delta_cosine": None,
+            "delta_norm_ratio": None,
+            "delta_relative_error": None,
+            "row_norm_relative_rms": None,
+            "maximum_row_norm_relative_error": None,
             "total_blocks": self.total_blocks,
             "changed_blocks": self.changed_blocks,
             "changed_block_fraction": (
@@ -700,9 +769,23 @@ def _edit_tensor_payload(
     *,
     row_chunk_size: int,
     arithmetic_mode: GGUFArithmeticMode = "chunk-stable-v1",
+    diagnostics_mode: GGUFDiagnosticsMode = "full",
 ) -> dict[str, object]:
     if arithmetic_mode not in {"legacy-plan-v2", "chunk-stable-v1"}:
         raise ValueError(f"unsupported GGUF arithmetic mode: {arithmetic_mode}")
+    if diagnostics_mode not in {"full", "search"}:
+        raise ValueError(f"unsupported GGUF diagnostics mode: {diagnostics_mode}")
+    if diagnostics_mode == "search" and any(
+        gate is not None
+        for gate in (
+            edit.minimum_delta_cosine,
+            edit.maximum_delta_relative_error,
+            edit.maximum_row_norm_relative_error,
+        )
+    ):
+        raise ValueError(
+            "search diagnostics cannot evaluate realized-delta or row-norm gates"
+        )
     qtype = tensor.tensor_type
     layout = QUANT_LAYOUTS[qtype.name]
     logical_shape = tuple(int(value) for value in reversed(tensor.shape.tolist()))
@@ -725,6 +808,7 @@ def _edit_tensor_payload(
             "before_payload_sha256": before_sha256,
             "after_payload_sha256": before_sha256,
             "payload_changed": False,
+            "diagnostics_complete": diagnostics_mode == "full",
             "quantization_metrics": {
                 "target_approximation_rmse": 0.0,
                 "target_approximation_relative_l2_error": 0.0,
@@ -746,7 +830,11 @@ def _edit_tensor_payload(
     a = factors[edit.a_key]
     right = factors[edit.right_key] if edit.right_key is not None else None
     b = factors[edit.resolved_b_key] if right is None else None
-    accumulator = _ErrorAccumulator()
+    accumulator: _ErrorAccumulator | _SearchAccumulator = (
+        _ErrorAccumulator()
+        if diagnostics_mode == "full"
+        else _SearchAccumulator()
+    )
     before_digest = hashlib.sha256()
     after_digest = hashlib.sha256()
 
@@ -847,15 +935,20 @@ def _edit_tensor_payload(
                         f"same-type codec changed {tensor.name} row layout: "
                         f"{encoded_candidate.shape} != {original_raw.shape}"
                     )
-                realized_candidate = codec.dequantize_rows(
-                    encoded_candidate, qtype, input_dim
-                )
                 if direct_single_requantization:
                     # With no original-block fallback and exactly one
                     # multiplier, every block selects this candidate.  Its
                     # selection error cannot affect either payload or report.
                     choices.fill(multiplier_index)
+                    realized_candidate = (
+                        codec.dequantize_rows(encoded_candidate, qtype, input_dim)
+                        if diagnostics_mode == "full"
+                        else None
+                    )
                 else:
+                    realized_candidate = codec.dequantize_rows(
+                        encoded_candidate, qtype, input_dim
+                    )
                     candidate_error = _block_error(
                         realized_candidate, target, layout.block_size
                     )
@@ -878,7 +971,11 @@ def _edit_tensor_payload(
                     + target.nbytes
                     + candidate.nbytes
                     + encoded_candidate.nbytes
-                    + realized_candidate.nbytes
+                    + (
+                        realized_candidate.nbytes
+                        if realized_candidate is not None
+                        else 0
+                    )
                     + selected_raw.nbytes
                     + original_raw.nbytes
                     + best_error.nbytes
@@ -896,19 +993,36 @@ def _edit_tensor_payload(
                 selected_raw = encoded_candidate
                 realized = realized_candidate
             else:
-                realized = codec.dequantize_rows(selected_raw, qtype, input_dim)
-            accumulator.update(
-                base=base,
-                target=target,
-                realized=realized,
-                original_raw=original_raw,
-                selected_raw=selected_raw,
-                choice_indices=choices,
-                multipliers=edit.quantization_multipliers,
-                type_size=layout.type_size,
-                workspace_bytes=max(workspace_bytes, realized.nbytes),
-                base_norms=original_norms,
-            )
+                realized = (
+                    codec.dequantize_rows(selected_raw, qtype, input_dim)
+                    if diagnostics_mode == "full"
+                    else None
+                )
+            if diagnostics_mode == "full":
+                assert isinstance(accumulator, _ErrorAccumulator)
+                assert realized is not None
+                accumulator.update(
+                    base=base,
+                    target=target,
+                    realized=realized,
+                    original_raw=original_raw,
+                    selected_raw=selected_raw,
+                    choice_indices=choices,
+                    multipliers=edit.quantization_multipliers,
+                    type_size=layout.type_size,
+                    workspace_bytes=max(workspace_bytes, realized.nbytes),
+                    base_norms=original_norms,
+                )
+            else:
+                assert isinstance(accumulator, _SearchAccumulator)
+                accumulator.update(
+                    original_raw=original_raw,
+                    selected_raw=selected_raw,
+                    choice_indices=choices,
+                    multipliers=edit.quantization_multipliers,
+                    type_size=layout.type_size,
+                    workspace_bytes=workspace_bytes,
+                )
             bank[start:stop] = selected_raw
             after_digest.update(memoryview(selected_raw))
 
@@ -938,19 +1052,18 @@ def _edit_tensor_payload(
             f"edit for {tensor.name} failed its delta error gate: "
             f"{delta_relative_error} > {edit.maximum_delta_relative_error}"
         )
-    norm_error = float(metrics["maximum_row_norm_relative_error"])
-    if (
-        edit.maximum_row_norm_relative_error is not None
-        and norm_error > edit.maximum_row_norm_relative_error
-    ):
-        raise RuntimeError(
-            f"edit for {tensor.name} failed its row-norm gate: "
-            f"{norm_error} > {edit.maximum_row_norm_relative_error}"
-        )
+    if edit.maximum_row_norm_relative_error is not None:
+        norm_error = float(metrics["maximum_row_norm_relative_error"])
+        if norm_error > edit.maximum_row_norm_relative_error:
+            raise RuntimeError(
+                f"edit for {tensor.name} failed its row-norm gate: "
+                f"{norm_error} > {edit.maximum_row_norm_relative_error}"
+            )
     return {
         "before_payload_sha256": before_sha256,
         "after_payload_sha256": after_sha256,
         "payload_changed": changed,
+        "diagnostics_complete": diagnostics_mode == "full",
         "quantization_metrics": metrics,
     }
 
@@ -1142,6 +1255,7 @@ def apply_quantized_gguf_ablation(
     dry_run: bool = False,
     force: bool = False,
     ggml_library: str | Path | None = None,
+    fast_search: bool = False,
 ) -> dict[str, Any]:
     """Apply a type-preserving plan to Q2_K..Q6_K and common GGUF quants."""
 
@@ -1175,6 +1289,22 @@ def apply_quantized_gguf_ablation(
         verify_untouched,
         arithmetic_mode,
     ) = _resolve_plan(plan_payload)
+    if fast_search and verify_untouched:
+        raise ValueError(
+            "fast search requires a plan with verify_untouched_bytes=false"
+        )
+    if fast_search and any(
+        gate is not None
+        for edit in edits
+        for gate in (
+            edit.minimum_delta_cosine,
+            edit.maximum_delta_relative_error,
+            edit.maximum_row_norm_relative_error,
+        )
+    ):
+        raise ValueError(
+            "fast search cannot defer diagnostics required by an edit gate"
+        )
     # A real merge validates the immutable copied snapshot below. Hashing the
     # mutable source first would add a complete, redundant multi-gigabyte scan.
     # Dry-runs have no snapshot, so they still validate the source directly.
@@ -1278,6 +1408,7 @@ def apply_quantized_gguf_ablation(
         "arithmetic_mode": arithmetic_mode,
         "verify_untouched_bytes": verify_untouched,
         "search_only": not verify_untouched,
+        "diagnostics_mode": "search" if fast_search else "full",
         "dry_run": dry_run,
         "edits": prepared,
     }
@@ -1345,6 +1476,7 @@ def apply_quantized_gguf_ablation(
                 codec,
                 row_chunk_size=row_chunk_size,
                 arithmetic_mode=arithmetic_mode,
+                diagnostics_mode="search" if fast_search else "full",
             )
             result_rows.append(
                 {

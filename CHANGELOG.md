@@ -71,6 +71,11 @@ All notable public changes to Heretic NX are documented here.
 
 ### Performance
 
+- Disposable quantized search artifacts can defer float64 realized-drift
+  diagnostics while retaining identical encoded payloads, target hashes and
+  final artifact hashes. The 2,048x4,096 rank-8 kernels are 3.09x faster for
+  direct Q8_0 and 1.61x faster for direct Q4_K; final winners must still be
+  rebuilt with complete diagnostics and undeclared-byte verification.
 - GGUF source, untouched-region and final-output integrity digests now share
   sequential scans and publication verifies the already-hashed inode. This
   cuts a real merge from six full/partial verification scans to two without

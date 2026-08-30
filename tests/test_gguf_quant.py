@@ -280,6 +280,106 @@ def test_v2_plan_replays_legacy_arithmetic_mode(tmp_path: Path) -> None:
     assert report["arithmetic_mode"] == "legacy-plan-v2"
 
 
+@pytest.mark.parametrize("qtype_name", ["Q8_0", "Q4_K"])
+def test_fast_search_is_payload_identical_to_full_diagnostics(
+    tmp_path: Path,
+    qtype_name: str,
+) -> None:
+    source = tmp_path / "source.gguf"
+    full_output = tmp_path / "full.gguf"
+    search_output = tmp_path / "search.gguf"
+    factors = tmp_path / "factors.safetensors"
+    plan = tmp_path / "plan.json"
+    qtype = getattr(GGMLQuantizationType, qtype_name)
+    _write_quantized_gguf(source, (qtype,))
+    save_file({"axis": np.array([1.0, -0.5, 0.25, 0.1], dtype=np.float32)}, factors)
+    _write_plan(
+        source,
+        factors,
+        plan,
+        qtype=qtype_name,
+        verify_untouched_bytes=False,
+    )
+
+    full = apply_quantized_gguf_ablation(
+        source,
+        full_output,
+        plan,
+        factors,
+    )
+    search = apply_quantized_gguf_ablation(
+        source,
+        search_output,
+        plan,
+        factors,
+        fast_search=True,
+    )
+
+    assert full_output.read_bytes() == search_output.read_bytes()
+    assert full["output"]["sha256"] == search["output"]["sha256"]
+    assert full["diagnostics_mode"] == "full"
+    assert search["diagnostics_mode"] == "search"
+    assert full["edits"][0]["diagnostics_complete"]
+    assert not search["edits"][0]["diagnostics_complete"]
+    assert search["edits"][0]["quantization_metrics"]["delta_cosine"] is None
+    for key in ("total_blocks", "changed_blocks", "changed_bytes"):
+        assert (
+            full["edits"][0]["quantization_metrics"][key]
+            == search["edits"][0]["quantization_metrics"][key]
+        )
+
+
+def test_fast_search_requires_explicit_disposable_plan(tmp_path: Path) -> None:
+    source = tmp_path / "source.gguf"
+    factors = tmp_path / "factors.safetensors"
+    plan = tmp_path / "plan.json"
+    _write_quantized_gguf(source, (GGMLQuantizationType.Q8_0,))
+    save_file({"axis": np.ones(4, dtype=np.float32)}, factors)
+    _write_plan(source, factors, plan, qtype="Q8_0")
+
+    with pytest.raises(ValueError, match="verify_untouched_bytes=false"):
+        apply_quantized_gguf_ablation(
+            source,
+            None,
+            plan,
+            factors,
+            dry_run=True,
+            fast_search=True,
+        )
+
+
+def test_fast_search_refuses_to_skip_required_metric_gate(tmp_path: Path) -> None:
+    source = tmp_path / "source.gguf"
+    factors = tmp_path / "factors.safetensors"
+    plan = tmp_path / "plan.json"
+    _write_quantized_gguf(source, (GGMLQuantizationType.Q8_0,))
+    save_file({"axis": np.ones(4, dtype=np.float32)}, factors)
+    GGUFQuantizedAblationPlan(
+        source_sha256=sha256_file(source),
+        tensor_artifact_sha256=sha256_file(factors),
+        verify_untouched_bytes=False,
+        edits=(
+            GGUFQuantizedTensorEdit(
+                tensor_name="blk.0.attn_output.weight",
+                expected_quantization="Q8_0",
+                a_key="axis",
+                strength=0.7,
+                minimum_delta_cosine=0.0,
+            ),
+        ),
+    ).write(plan)
+
+    with pytest.raises(ValueError, match="required by an edit gate"):
+        apply_quantized_gguf_ablation(
+            source,
+            None,
+            plan,
+            factors,
+            dry_run=True,
+            fast_search=True,
+        )
+
+
 @pytest.mark.parametrize("qtype_name", ["Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q8_0"])
 def test_common_quant_merge_is_transactional_without_native_codec(
     tmp_path: Path,

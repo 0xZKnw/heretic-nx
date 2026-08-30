@@ -257,6 +257,16 @@ final quantization must be evaluated independently against an
 untouched baseline of the same recipe: compare base Q4 to edited Q4, never base
 Q8 to edited Q4.
 
+Disposable refusal-screen artifacts can defer float64 realized-drift
+diagnostics without changing a single encoded model byte. Set
+`verify_untouched_bytes` to `false` in the search plan and pass
+`--fast-search`; target payload hashes and the final artifact hash remain fully
+verified, while the report marks deferred metrics as unavailable. On the
+2,048x4,096 rank-8 reference kernels this is 3.09x faster for direct Q8_0 and
+1.61x faster for direct Q4_K, with identical payload SHA-256. This mode is
+deliberately ineligible for final evidence: rebuild the frozen winner without
+`--fast-search`, with undeclared-byte verification and all metric gates enabled.
+
 For large candidate frontiers, run the refusal screen before KL. The Ling
 runner accepts `--refusal-cap 6` and stops irreversibly failed candidates as
 soon as the seventh marker is observed; such partial reports are explicitly
