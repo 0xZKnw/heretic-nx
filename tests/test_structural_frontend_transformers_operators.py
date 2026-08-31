@@ -141,6 +141,44 @@ def test_real_gemma4_moe_router_is_not_a_residual_branch() -> None:
     assert not routed.editable
 
 
+def test_real_gemma4_shared_kv_attention_is_discovered() -> None:
+    model_class = _available("Gemma4ForCausalLM")
+    config_class = _available("Gemma4TextConfig")
+    model = model_class(
+        config_class(
+            vocab_size=64,
+            hidden_size=16,
+            intermediate_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            num_kv_shared_layers=1,
+            head_dim=4,
+            max_position_embeddings=32,
+            layer_types=["full_attention", "full_attention"],
+            vocab_size_per_layer_input=64,
+            hidden_size_per_layer_input=4,
+            pad_token_id=0,
+            bos_token_id=1,
+            eos_token_id=2,
+        )
+    )
+
+    report = discover_structural_frontend(model)
+
+    attention_sites = tuple(
+        site for site in report.activation_sites if site.role == "attention_output"
+    )
+    assert [site.attention_variant for site in attention_sites] == [
+        "split",
+        "shared_kv",
+    ]
+    assert all(
+        target.editable
+        for target in report.targets_by_role("attention_output")
+    )
+
+
 def _lfm2_model(*, layer_types: list[str]) -> object:
     model_class = _available("Lfm2ForCausalLM")
     config_class = _available("Lfm2Config")

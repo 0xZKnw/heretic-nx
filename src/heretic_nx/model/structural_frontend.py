@@ -611,7 +611,42 @@ def _attention_variant(
         and values[0].input_dim == stream_dim
     ):
         return "split"
+    if (
+        len(queries) == 1
+        and queries[0].input_dim == stream_dim
+        and not keys
+        and not values
+        and _has_verified_shared_kv_contract(module)
+    ):
+        return "shared_kv"
     return None
+
+
+def _has_verified_shared_kv_contract(module: nn.Module) -> bool:
+    """Prove that a query-only attention layer intentionally reuses KV states.
+
+    Attribute names alone are insufficient: require the module's positive runtime
+    flag to agree with a coherent layer interval in its attached configuration.
+    This recognizes architectures such as Gemma 4 without weakening the
+    fail-closed rule for arbitrary modules that merely expose ``q_proj`` and
+    ``o_proj``.
+    """
+
+    if getattr(module, "is_kv_shared_layer", None) is not True:
+        return False
+    layer_index = getattr(module, "layer_idx", None)
+    config = getattr(module, "config", None)
+    layer_count = getattr(config, "num_hidden_layers", None)
+    shared_count = getattr(config, "num_kv_shared_layers", None)
+    if not all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for value in (layer_index, layer_count, shared_count)
+    ):
+        return False
+    if not 0 < shared_count < layer_count:
+        return False
+    first_shared_layer = layer_count - shared_count
+    return first_shared_layer <= layer_index < layer_count
 
 
 def _ffn_structure_is_coherent(
