@@ -57,6 +57,7 @@ class GGUFQuantizedTensorEdit(BaseModel):
     a_key: str = Field(min_length=1)
     b_key: str | None = None
     right_key: str | None = None
+    importance_key: str | None = Field(default=None, min_length=1)
     strength: float = Field(ge=0)
     preserve_row_norms: bool = True
     preserve_original_blocks: bool = True
@@ -142,6 +143,7 @@ class _ResolvedEdit:
     minimum_delta_cosine: float | None
     maximum_delta_relative_error: float | None
     maximum_row_norm_relative_error: float | None
+    importance_key: str | None = None
 
     @property
     def resolved_b_key(self) -> str:
@@ -407,6 +409,7 @@ def _resolve_plan(
                 a_key=edit.a_key,
                 b_key=edit.b_key,
                 right_key=edit.right_key,
+                importance_key=edit.importance_key,
                 strength=edit.strength,
                 preserve_row_norms=edit.preserve_row_norms,
                 preserve_original_blocks=edit.preserve_original_blocks,
@@ -486,6 +489,7 @@ def _load_factors(
         artifact = load_safetensors(tensor_payload)
     except Exception as error:
         raise RuntimeError("invalid safetensors factor artifact") from error
+    required.update(edit.importance_key for edit in edits if edit.importance_key is not None)
     missing = sorted(required - set(artifact))
     if missing:
         raise RuntimeError(f"tensor artifact is missing factors: {missing}")
@@ -655,12 +659,25 @@ def _edited_from_delta(
     )
 
 
-def _block_error(values: np.ndarray, target: np.ndarray, block_size: int) -> np.ndarray:
+def _block_error(values: np.ndarray, target: np.ndarray, block_size: int,
+                 importance: np.ndarray | None = None) -> np.ndarray:
     difference = np.subtract(values, target, dtype=np.float64).reshape(
         values.shape[0], -1, block_size
     )
     np.square(difference, out=difference)
+    if importance is not None:
+        difference *= importance.reshape(1, -1, block_size)
     return np.sum(difference, axis=2, dtype=np.float64)
+
+
+def _input_importance(edit: _ResolvedEdit, factors: dict[str, np.ndarray], input_dim: int) -> np.ndarray | None:
+    if edit.importance_key is None:
+        return None
+    value = factors[edit.importance_key]
+    if value.shape != (input_dim, 1) or not np.isfinite(value).all() or np.any(value < 0) or not np.any(value > 0):
+        raise ValueError("input importance must be a finite non-negative input-sized vector with positive mass")
+    value = value[:, 0].astype(np.float64)
+    return value / value.mean()
 
 
 def _streaming_projection(
@@ -827,6 +844,7 @@ def _edit_tensor_payload(
             },
         }
 
+    importance = _input_importance(edit, factors, input_dim)
     a = factors[edit.a_key]
     right = factors[edit.right_key] if edit.right_key is not None else None
     b = factors[edit.resolved_b_key] if right is None else None
@@ -894,7 +912,7 @@ def _edit_tensor_payload(
             )
             if edit.preserve_original_blocks:
                 selected_raw = original_raw.copy()
-                best_error = _block_error(base, target, layout.block_size)
+                best_error = _block_error(base, target, layout.block_size, importance)
                 choices = np.full((base.shape[0], blocks_per_row), -1, dtype=np.int16)
             else:
                 selected_raw = (
@@ -950,7 +968,7 @@ def _edit_tensor_payload(
                         encoded_candidate, qtype, input_dim
                     )
                     candidate_error = _block_error(
-                        realized_candidate, target, layout.block_size
+                        realized_candidate, target, layout.block_size, importance
                     )
                     threshold = best_error * (1.0 - edit.minimum_block_improvement)
                     better = candidate_error < threshold
@@ -1372,6 +1390,7 @@ def apply_quantized_gguf_ablation(
                     f"direct right factor mismatch for {edit.tensor_name}: "
                     f"A={a.shape}, right={right.shape}, input={logical_shape[-1]}"
                 )
+        _input_importance(edit, factors, logical_shape[-1])
         prepared.append(
             {
                 "tensor_name": edit.tensor_name,
@@ -1385,6 +1404,8 @@ def apply_quantized_gguf_ablation(
                 "preserve_row_norms": edit.preserve_row_norms,
                 "preserve_original_blocks": edit.preserve_original_blocks,
                 "quantization_multipliers": list(edit.quantization_multipliers),
+                "importance_key": edit.importance_key,
+                "block_selection_metric": "diagonal-input-second-moment" if edit.importance_key else "weight-l2",
                 "data_offset": int(tensor.data_offset),
                 "quantized_bytes": int(tensor.n_bytes),
             }

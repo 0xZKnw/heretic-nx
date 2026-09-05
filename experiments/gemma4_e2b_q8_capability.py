@@ -16,6 +16,7 @@ from transformers import AutoTokenizer
 from experiments.lfm25_closed_track_eval import expanded_capability_rows
 from experiments.lfm25_residual_stream_capability import LETTERS, task_scores
 from heretic_nx.eval.capability import paired_bootstrap_interval
+from heretic_nx.eval.comparison import validate_capability_pair
 from heretic_nx.eval.gguf_runtime import (
     NativeRuntimeClient,
     RESTRICTED_GRAMMAR,
@@ -34,6 +35,7 @@ NONINFERIORITY_MARGIN = 0.03
 ALPHA = 0.05
 RESAMPLES = 10_000
 SEED = 8314
+SCHEMA_FAMILY = "gemma4-e2b"
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
@@ -109,7 +111,7 @@ def collect(args: argparse.Namespace) -> None:
     ]
     prompts_hash = sha256_json(prompts)
     expected = {
-        "schema_version": "gemma4-e2b-q8-capability-partial-v1",
+        "schema_version": f"{SCHEMA_FAMILY}-q8-capability-partial-v1",
         "label": args.label,
         "model": args.model,
         "runtime_model": runtime,
@@ -141,7 +143,7 @@ def collect(args: argparse.Namespace) -> None:
         for prediction, row in zip(predictions, rows)
     ]
     report = {
-        "schema_version": "gemma4-e2b-q8-capability-arm-v1",
+        "schema_version": f"{SCHEMA_FAMILY}-q8-capability-arm-v1",
         "label": args.label,
         "model": args.model,
         "artifact": {
@@ -177,6 +179,7 @@ def collect(args: argparse.Namespace) -> None:
             "than KL but is not a comprehensive capability benchmark."
         ),
     }
+    report["evidence_sha256"] = sha256_json(report)
     output = RUN_DIR / f"{args.label}.json"
     write_json(output, report)
     print(
@@ -196,13 +199,8 @@ def collect(args: argparse.Namespace) -> None:
 def compare(args: argparse.Namespace) -> None:
     base = json.loads((RUN_DIR / f"{args.base_label}.json").read_text())
     candidate = json.loads((RUN_DIR / f"{args.candidate_label}.json").read_text())
-    if base["datasets"]["rows_sha256"] != candidate["datasets"]["rows_sha256"]:
-        raise RuntimeError("capability reports used different rows")
-    if (
-        base["protocol"]["prompt_tokens_sha256"]
-        != candidate["protocol"]["prompt_tokens_sha256"]
-    ):
-        raise RuntimeError("capability reports used different prompt tokens")
+    rows = expanded_capability_rows()
+    validate_capability_pair(base, candidate, rows)
     base_correctness = [int(value) for value in base["results"]["correctness"]]
     candidate_correctness = [
         int(value) for value in candidate["results"]["correctness"]
@@ -218,7 +216,15 @@ def compare(args: argparse.Namespace) -> None:
         )
     )
     tasks = {}
+    task_intervals = {}
     for task in sorted(base["results"]["tasks"]):
+        indices = [i for i, row in enumerate(rows) if str(row["task"]) == task]
+        task_intervals[task] = asdict(paired_bootstrap_interval(
+            [base_correctness[i] for i in indices],
+            [candidate_correctness[i] for i in indices],
+            margin=NONINFERIORITY_MARGIN, alpha=ALPHA / len(base["results"]["tasks"]),
+            resamples=RESAMPLES, seed=SEED,
+        ))
         left = base["results"]["tasks"][task]
         right = candidate["results"]["tasks"][task]
         tasks[task] = {
@@ -246,7 +252,7 @@ def compare(args: argparse.Namespace) -> None:
         ),
     }
     report = {
-        "schema_version": "gemma4-e2b-q8-capability-comparison-v1",
+        "schema_version": f"{SCHEMA_FAMILY}-q8-capability-comparison-v1",
         "base_label": args.base_label,
         "candidate_label": args.candidate_label,
         "rows": len(base_correctness),
@@ -260,13 +266,16 @@ def compare(args: argparse.Namespace) -> None:
             "paired_counts": paired_counts,
             "tasks": tasks,
         },
-        "passed_noninferiority": interval["noninferiority_passed"],
+        "passed_noninferiority": interval["noninferiority_passed"] and all(
+            value["noninferiority_passed"] for value in task_intervals.values()),
+        "simultaneous_task_intervals": task_intervals,
         "demonstrated_accuracy_improvement": interval["lower"] > 0.0,
         "interpretation_guard": (
             "Improvement requires the paired 95% interval above zero; "
             "noninferiority uses a predeclared three-point margin."
         ),
     }
+    report["evidence_sha256"] = sha256_json(report)
     output = RUN_DIR / f"{args.candidate_label}-vs-{args.base_label}.json"
     write_json(output, report)
     print(json.dumps({**report, "report": str(output)}, indent=2), flush=True)

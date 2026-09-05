@@ -25,6 +25,7 @@ class PairedInterval:
     margin: float
     noninferiority_passed: bool
     equivalence_passed: bool
+    method: str = "paired-percentile-bootstrap"
 
 
 @dataclass(frozen=True)
@@ -145,7 +146,13 @@ def paired_bootstrap_interval(
     resamples: int = 10_000,
     seed: int = 0,
 ) -> PairedInterval:
-    """Paired percentile interval for candidate-minus-baseline mean score."""
+    """Paired score interval; binary scores use conservative exact bounds.
+
+    For binary outcomes, bound the two discordance probabilities with
+    simultaneous Clopper-Pearson intervals, then subtract their bounds. This
+    remains non-degenerate with zero observed discordances. Continuous scores
+    retain the approximate paired percentile bootstrap.
+    """
 
     base = np.asarray(torch.as_tensor(baseline, dtype=torch.float64).cpu())
     edited = np.asarray(torch.as_tensor(candidate, dtype=torch.float64).cpu())
@@ -162,6 +169,28 @@ def paired_bootstrap_interval(
     ):
         raise ValueError("margin, alpha, or resamples is invalid")
     differences = edited - base
+    if np.isin(base, (0, 1)).all() and np.isin(edited, (0, 1)).all():
+        from scipy.stats import beta as beta_distribution
+
+        def binomial_bounds(successes: int) -> tuple[float, float]:
+            # Two probabilities, two tails: Bonferroni alpha/4 per tail.
+            n = base.size
+            lower = (0.0 if successes == 0 else float(beta_distribution.ppf(
+                alpha / 4, successes, n - successes + 1)))
+            upper = (1.0 if successes == n else float(beta_distribution.ppf(
+                1 - alpha / 4, successes + 1, n - successes)))
+            return lower, upper
+
+        gain_lower, gain_upper = binomial_bounds(int((differences == 1).sum()))
+        loss_lower, loss_upper = binomial_bounds(int((differences == -1).sum()))
+        lower, upper = gain_lower - loss_upper, gain_upper - loss_lower
+        return PairedInterval(
+            count=int(base.size), mean_difference=float(differences.mean()),
+            lower=lower, upper=upper, margin=float(margin),
+            noninferiority_passed=bool(lower >= -margin),
+            equivalence_passed=bool(lower >= -margin and upper <= margin),
+            method="paired-binomial-bonferroni",
+        )
     generator = np.random.default_rng(seed)
     means = np.empty(resamples, dtype=np.float64)
     for start in range(0, resamples, 1024):

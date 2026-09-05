@@ -35,6 +35,7 @@ from .gguf_quant import (
     _ResolvedEdit,
     _SearchAccumulator,
     _block_error,
+    _input_importance,
     _edited_from_prepared,
     _file_and_untouched_sha256,
     _load_factors,
@@ -255,6 +256,7 @@ def _edit_invariant(edit: _ResolvedEdit) -> tuple[object, ...]:
         edit.a_key,
         edit.b_key,
         edit.right_key,
+        edit.importance_key,
         edit.preserve_row_norms,
         edit.preserve_original_blocks,
         edit.quantization_multipliers,
@@ -381,6 +383,7 @@ def _edit_tensor_strength_sweep(
     logical_shape = tuple(int(value) for value in reversed(source_tensor.shape.tolist()))
     matrix_count = int(np.prod(logical_shape[:-2])) or 1
     output_dim, input_dim = logical_shape[-2:]
+    importance = _input_importance(template, factors, input_dim)
     encoded_row_bytes = input_dim // layout.block_size * layout.type_size
     raw = np.asarray(source_tensor.data)
     if raw.dtype.itemsize != 1 or raw.shape[-1] != encoded_row_bytes:
@@ -488,7 +491,7 @@ def _edit_tensor_strength_sweep(
                 )
                 if edit.preserve_original_blocks:
                     selected_raw = original_raw.copy()
-                    best_error = _block_error(base, target, layout.block_size)
+                    best_error = _block_error(base, target, layout.block_size, importance)
                     choices = np.full(
                         (base.shape[0], blocks_per_row), -1, dtype=np.int16
                     )
@@ -549,7 +552,7 @@ def _edit_tensor_strength_sweep(
                             encoded_candidate, qtype, input_dim
                         )
                         candidate_error = _block_error(
-                            realized_candidate, target, layout.block_size
+                            realized_candidate, target, layout.block_size, importance
                         )
                         threshold = best_error * (
                             1.0 - edit.minimum_block_improvement
@@ -803,6 +806,7 @@ def _preflight_source(
                     f"direct right factor mismatch for {edit.tensor_name}: "
                     f"A={a.shape}, right={right.shape}, input={logical_shape[-1]}"
                 )
+        _input_importance(edit, factors, logical_shape[-1])
         prepared_rows.append(
             {
                 "tensor_name": edit.tensor_name,
@@ -815,6 +819,8 @@ def _preflight_source(
                 "preserve_row_norms": edit.preserve_row_norms,
                 "preserve_original_blocks": edit.preserve_original_blocks,
                 "quantization_multipliers": list(edit.quantization_multipliers),
+                "importance_key": edit.importance_key,
+                "block_selection_metric": "diagonal-input-second-moment" if edit.importance_key else "weight-l2",
                 "data_offset": int(tensor.data_offset),
                 "quantized_bytes": int(tensor.n_bytes),
             }

@@ -36,6 +36,7 @@ GOOD_REVISION = "02c6a92cfcf11bb0c387334f8146d149d65b587f"
 ROW_COUNT = 104
 VOCAB_SIZE = 262_144
 RAW_LOGIT_SCHEMA = "gemma4-e2b-q8-first-token-raw-logits-v1"
+SCHEMA_FAMILY = "gemma4-e2b"
 NATIVE_RUNTIME_DIR = ROOT / "build" / "llama.cpp-native" / "bin"
 NATIVE_EXECUTABLE = NATIVE_RUNTIME_DIR / "llama_raw_logits"
 
@@ -163,7 +164,7 @@ def compare(args: argparse.Namespace) -> None:
     ]
     mean = float(np.mean(values))
     report = {
-        "schema_version": "gemma4-e2b-q8-first-token-kl-raw-v1",
+        "schema_version": f"{SCHEMA_FAMILY}-q8-first-token-kl-raw-v1",
         "base": str(base_path),
         "candidate": str(candidate_path),
         "prompt_tokens_sha256": base_progress["prompt_tokens_sha256"],

@@ -36,6 +36,9 @@ DETECTOR_DIAGNOSTICS = OLD_RUN_DIR / "teacher-delta-distilled-diagnostics.json"
 RUN_DIR = ROOT / "runs" / "gemma4-e2b-q8"
 FACTORS = RUN_DIR / "lambda100-factors.safetensors"
 PREPARATION = RUN_DIR / "lambda100-preparation.json"
+DETECTOR_SCHEMA_VERSION = "gemma4-e2b-distilled-detectors-v1"
+FACTOR_LABEL = "lambda100"
+PROFILE_LABEL = "l100"
 
 MODEL_ID = "google/gemma-4-E2B-it"
 MODEL_REVISION = "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
@@ -52,6 +55,10 @@ EXPECTED_SELECTED = (
     "L25:ffn_out",
     "L30:attention_out",
 )
+EXPECTED_STREAM_DIM = 1536
+EXPECTED_LAYER_COUNT = 35
+SCHEMA_FAMILY = "gemma4-e2b"
+ARTIFACT_STEM = "gemma4-e2b-q8"
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -71,7 +78,7 @@ def _source_metadata() -> dict[str, str]:
         raise RuntimeError("activation cache does not match the pinned protocol")
     with safe_open(DETECTORS, framework="pt", device="cpu") as handle:
         detector_metadata = handle.metadata() or {}
-    if detector_metadata.get("schema_version") != "gemma4-e2b-distilled-detectors-v1":
+    if detector_metadata.get("schema_version") != DETECTOR_SCHEMA_VERSION:
         raise RuntimeError("unsupported distilled detector artifact")
     return metadata
 
@@ -92,10 +99,10 @@ def _load_structure() -> Any:
     torch.mps.empty_cache()
     if (
         report.decoder_stack_path != "model.layers"
-        or report.stream_dim != 1536
-        or report.layer_count != 35
-        or len(report.activation_sites) != 70
-        or len(report.editable_targets) != 70
+        or report.stream_dim != EXPECTED_STREAM_DIM
+        or report.layer_count != EXPECTED_LAYER_COUNT
+        or len(report.activation_sites) != 2 * EXPECTED_LAYER_COUNT
+        or len(report.editable_targets) != 2 * EXPECTED_LAYER_COUNT
     ):
         raise RuntimeError("the pinned checkpoint has an unexpected structure")
     return report
@@ -128,7 +135,7 @@ def prepare() -> dict[str, Any]:
         for target in report.editable_targets
         if target.role in {"attention_output", "ffn_output"}
     }
-    if len(targets) != 70:
+    if len(targets) != 2 * EXPECTED_LAYER_COUNT:
         raise RuntimeError("structural target mapping is not one-to-one")
 
     activation_payload = load_file(ACTIVATIONS)
@@ -213,14 +220,14 @@ def prepare() -> dict[str, Any]:
         factor_payload,
         FACTORS,
         metadata={
-            "schema_version": "gemma4-e2b-q8-lambda100-factors-v1",
+            "schema_version": f"{SCHEMA_FAMILY}-q8-{FACTOR_LABEL}-factors-v1",
             "model_revision": MODEL_REVISION,
             "structure_hash": report.structure_hash,
             "safe_lambda": f"{SAFE_LAMBDA:g}",
         },
     )
     preparation = {
-        "schema_version": "gemma4-e2b-q8-preparation-v1",
+        "schema_version": f"{SCHEMA_FAMILY}-q8-preparation-v1",
         "model": {"id": MODEL_ID, "revision": MODEL_REVISION},
         "source_weights": {
             "path": str(SOURCE_WEIGHTS),
@@ -262,7 +269,7 @@ def _verified_preparation() -> dict[str, Any]:
         raise RuntimeError("run the prepare command first")
     preparation = json.loads(PREPARATION.read_text(encoding="utf-8"))
     if (
-        preparation.get("schema_version") != "gemma4-e2b-q8-preparation-v1"
+        preparation.get("schema_version") != f"{SCHEMA_FAMILY}-q8-preparation-v1"
         or preparation.get("base_q8", {}).get("sha256") != sha256_file(BASE_Q8)
         or preparation.get("factor_artifact", {}).get("sha256") != sha256_file(FACTORS)
         or tuple(row["site_id"] for row in preparation.get("selected", []))
@@ -299,7 +306,7 @@ def plan(beta: float) -> Path:
         verify_untouched_bytes=True,
     )
     label = str(beta).replace(".", "p")
-    path = RUN_DIR / f"lambda100-beta{label}.plan.json"
+    path = RUN_DIR / f"{FACTOR_LABEL}-beta{label}.plan.json"
     result.write(path)
     return path
 
@@ -309,17 +316,17 @@ def sweep(betas: list[float]) -> dict[str, Any]:
         raise ValueError("sweep requires at least two unique beta values")
     candidates = []
     for beta in betas:
-        label = f"l100-b{str(beta).replace('.', 'p')}"
+        label = f"{PROFILE_LABEL}-b{str(beta).replace('.', 'p')}"
         candidates.append(
             GGUFStrengthSweepCandidate(
                 label=label,
                 plan_path=plan(beta),
-                output_path=ROOT / "outputs" / f"gemma4-e2b-q8-{label}.gguf",
+                output_path=ROOT / "outputs" / f"{ARTIFACT_STEM}-{label}.gguf",
             )
         )
     result = apply_quantized_gguf_strength_sweep(BASE_Q8, FACTORS, candidates)
     sweep_label = "-".join(str(beta).replace(".", "p") for beta in betas)
-    report_path = RUN_DIR / f"lambda100-strength-sweep-{sweep_label}.json"
+    report_path = RUN_DIR / f"{FACTOR_LABEL}-strength-sweep-{sweep_label}.json"
     write_json(report_path, result)
     print(json.dumps({"report": str(report_path), **result}, indent=2), flush=True)
     return result
