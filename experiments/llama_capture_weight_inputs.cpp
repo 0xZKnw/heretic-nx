@@ -106,15 +106,28 @@ std::vector<float> token_vectors(const ggml_tensor * tensor, bool all_tokens) {
 
 bool capture_callback(ggml_tensor * tensor, bool ask, void * user_data) {
     auto & state = *static_cast<CaptureState *>(user_data);
-    if (state.row < 0 || tensor == nullptr || tensor->op != GGML_OP_MUL_MAT) {
+    if (state.row < 0 || tensor == nullptr) {
         return false;
     }
+    // @name captures an explicit graph activation (e.g. @l_out-15), while
+    // ordinary names retain the original projection-input capture semantics.
+    int activation_index = -1;
+    for (size_t i = 0; i < state.weights.size(); ++i) {
+        if (state.weights[i].size() > 1 && state.weights[i][0] == '@' &&
+            state.weights[i].substr(1) == tensor->name) {
+            activation_index = static_cast<int>(i);
+            break;
+        }
+    }
+    if (activation_index < 0 && tensor->op != GGML_OP_MUL_MAT) return false;
     const int src0_index = target_index(state, tensor->src[0]);
     const int src1_index = target_index(state, tensor->src[1]);
-    const int index = src0_index >= 0 ? src0_index : src1_index;
+    const int index = activation_index >= 0 ? activation_index :
+        (src0_index >= 0 ? src0_index : src1_index);
     if (index < 0) return false;
     if (ask) return true;
-    const ggml_tensor * activation = src0_index >= 0 ? tensor->src[1] : tensor->src[0];
+    const ggml_tensor * activation = activation_index >= 0 ? tensor :
+        (src0_index >= 0 ? tensor->src[1] : tensor->src[0]);
     try {
         auto captured = token_vectors(activation, state.all_tokens);
         auto & destination = state.values[static_cast<size_t>(index)];
