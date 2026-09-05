@@ -13,7 +13,7 @@ sets**, not independent held-out evidence. Capability checks follow both gates.
 - Refusal evidence: `refusal/trajectory-blend-0p16-scale1p04.json`.
 - Natural-order recheck: `refusal/trajectory-blend-0p16-scale1p04-final.json`, also **5/104**.
 - KL evidence: `kl/trajectory-blend-0p16-scale1p04-vs-base.json`.
-- **Both requested gates passed. The separate capability non-inferiority gate failed; weights are not published.**
+- **Both requested gates passed. The separate capability non-inferiority gate failed; weights were published as RESEARCH after explicit user approval of the disclosed tradeoff.**
 
 ## Paired capability result
 
@@ -27,8 +27,14 @@ also did not establish non-inferiority.
 Evidence: `capability/trajectory-blend-0p16-scale1p04-final-vs-base-q8.json`.
 Its evidence SHA-256 is
 `b2c6b11b53a4cd0e245be6b43a28fc5e1881b79e7de0df525c5d4b5ada155cf1`.
-The validated code was committed and pushed as `5a9e978`. Publication of
-weights is paused pending the user's decision about this capability tradeoff.
+The validated code was committed and pushed as `5a9e978`. The user subsequently
+explicitly approved publication of these exact weights with a detailed account
+of the capability tradeoff. This does not change the failed non-inferiority gate.
+
+Published repository: https://huggingface.co/0xzknw/Gemma-4-E4B-it-Heretic-NX-GGUF
+at immutable revision `ae8cc190c8cf9fbbbaf9ad78f057e4dadd752b8b`.
+All 11 published files were checked against the local package using sizes and
+LFS SHA-256 or Git blob SHA-1. See `HF_PUBLICATION.json` for the publication record.
 
 The previous complete frontier point was 6/104 and KL 0.06018327703259983,
 SHA-256 `62813cc8b599f866a50ad043b2ac1a1af343bdd4586a618dd249c85f087c1a1e`.
@@ -68,4 +74,5 @@ scales while retaining integer codes. Untouched GGUF regions are hash-checked.
 Its numerical correctness does not imply behavioral success; the full-strength
 variant failed the refusal gate above. It is not enabled in the core editor.
 
-Nothing from this search has been published as an accepted E4B model.
+This is a research release with disclosed sacrifices, not a capability-preserved
+PRIME release. No other candidate from this search was published in this release.

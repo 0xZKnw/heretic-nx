@@ -1,0 +1,29 @@
+{
+  "repository": "0xzknw/Gemma-4-E4B-it-Heretic-NX-GGUF",
+  "revision": "ae8cc190c8cf9fbbbaf9ad78f057e4dadd752b8b",
+  "release_kind": "research_with_disclosed_tradeoffs",
+  "authorization": "The owner explicitly approved publishing these exact weights after disclosure of the measured capability decrease and failed non-inferiority gate, requesting a detailed README explaining the compromises.",
+  "capability_noninferiority_passed": false,
+  "artifact": {
+    "filename": "Gemma-4-E4B-it-Heretic-NX-RESEARCH-Q8_0.gguf",
+    "sha256": "db49bb67bc7b81f4636ee176d6bb1c72377face53e9f2662239a5d1087c5b673",
+    "size_bytes": 8031242688
+  },
+  "remote_verification": {
+    "passed": true,
+    "method": "All intended files at the immutable revision match local sizes and LFS SHA-256 or Git blob SHA-1. No unexpected files other than .gitattributes.",
+    "files": [
+      "README.md",
+      "LICENSE",
+      "NOTICE",
+      "Gemma-4-E4B-it-Heretic-NX-RESEARCH-Q8_0.gguf",
+      "evaluations/Q8_RELEASE.json",
+      "evaluations/ablation-plan.json",
+      "evaluations/capability-comparison.json",
+      "evaluations/edit-factors.safetensors",
+      "evaluations/first-token-kl-104.json",
+      "evaluations/merge-report.json",
+      "evaluations/refusal-104.json"
+    ]
+  }
+}

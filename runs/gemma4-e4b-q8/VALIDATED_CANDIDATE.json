@@ -1,6 +1,8 @@
 {
   "status": "requested_refusal_and_kl_caps_passed_capability_gate_not_passed",
-  "publication": "not_published_pending_user_decision",
+  "publication": "published_research_with_user_authorized_capability_tradeoff",
+  "hf_repository": "0xzknw/Gemma-4-E4B-it-Heretic-NX-GGUF",
+  "hf_revision": "ae8cc190c8cf9fbbbaf9ad78f057e4dadd752b8b",
   "artifact": {
     "path": "outputs/gemma4-e4b-q8-trajectory-blend-0p16-scale1p04.gguf",
     "sha256": "db49bb67bc7b81f4636ee176d6bb1c72377face53e9f2662239a5d1087c5b673",

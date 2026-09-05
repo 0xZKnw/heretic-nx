@@ -8,12 +8,22 @@ import subprocess
 
 from heretic_nx.edits.gguf_q8 import _copy_source
 from heretic_nx.hashing import canonical_json, sha256_file
-from gemma4_e4b_q8_screen_candidate import refusal_passed
+from experiments.gemma4_e4b_q8_screen_candidate import refusal_passed
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN = ROOT / 'runs/gemma4-e4b-q8'
 DEST = ROOT / 'hf_release/gemma4-e4b'
 NAME = 'Gemma-4-E4B-it-Heretic-NX-PRIME-Q8_0.gguf'
+
+
+def release_kind(capability_passed, research_reason):
+    if research_reason is not None:
+        if not research_reason.strip():
+            raise ValueError('research release requires an explicit decision reason')
+        return 'research_with_disclosed_tradeoffs'
+    if not capability_passed:
+        raise ValueError('capability gate failed; explicit research release decision required')
+    return 'prime_gates_passed'
 
 
 def read(path):
@@ -38,6 +48,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--search-label', required=True)
     p.add_argument('--artifact', type=Path, required=True)
+    p.add_argument('--research-release-reason', help='Record explicit authorization to publish research evidence without claiming all PRIME gates passed.')
     args = p.parse_args()
     label = args.search_label
     artifact = args.artifact.resolve(strict=True)
@@ -50,16 +61,17 @@ def main():
     prep = read(RUN / 'lambda100-preparation.json')
     if not refusal_passed(search) or not refusal_passed(final):
         raise ValueError('both refusal passes must cover all 104 rows and pass')
-    if (not kl['passed'] or kl['count'] != 104 or not 0 <= kl['mean_first_token_kl'] <= .05
-            or not capability['passed_noninferiority']):
-        raise ValueError('KL or capability release gate failed')
+    if not kl['passed'] or kl['count'] != 104 or not 0 <= kl['mean_first_token_kl'] <= .05:
+        raise ValueError('KL release gate failed')
+    kind = release_kind(capability['passed_noninferiority'], args.research_release_reason)
+    name = NAME if kind == 'prime_gates_passed' else NAME.replace('-PRIME-', '-RESEARCH-')
     hashes = [search['runtime_model']['artifact_sha256'], final['runtime_model']['artifact_sha256'],
               kl['candidate_artifact']['sha256'], capability['artifacts']['candidate']['sha256'],
               build['merge']['output']['sha256']]
     if any(value != digest for value in hashes):
         raise ValueError('release evidence does not identify one exact artifact')
     (DEST / 'evaluations').mkdir(parents=True, exist_ok=True)
-    output = DEST / NAME
+    output = DEST / name
     if not output.exists():
         _copy_source(artifact, output)
     if sha256_file(output) != digest:
@@ -84,7 +96,9 @@ def main():
                ROOT / 'experiments/llama_capture_weight_inputs.cpp']
     report = {
         'schema_version': 'gemma4-e4b-heretic-nx-prime-q8-release-v1',
-        'artifact': {'filename': NAME, 'sha256': digest, 'size_bytes': artifact.stat().st_size, 'quantization': 'Q8_0'},
+        'release_decision': {'kind': kind, 'reason': args.research_release_reason,
+                             'all_prime_gates_passed': capability['passed_noninferiority']},
+        'artifact': {'filename': name, 'sha256': digest, 'size_bytes': artifact.stat().st_size, 'quantization': 'Q8_0'},
         'source': {'model': prep['model'], 'base_q8': prep['base_q8']},
         'method': {'trajectory_blend': build['blend'], 'scale': build['scale'],
                    'sites': build['sites'], 'row_norm_restoration': False,

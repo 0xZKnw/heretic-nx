@@ -1,0 +1,17 @@
+Gemma 4 E4B IT — Heretic NX RESEARCH Q8_0
+
+This is a modified derivative of google/gemma-4-E4B-it, authored by Google
+DeepMind. The base model identifies Apache License 2.0 as its license:
+https://ai.google.dev/gemma/docs/gemma_4_license
+
+Base revision: ee0ef6023621cff504d758262d4e04895a5af4a2
+
+Modification notice: 0xzknw / Heretic NX applied static low-rank behavioral
+edits to seven dense output projections in the Q8_0 deployment artifact.
+Gemma-4-E4B-it-Heretic-NX-RESEARCH-Q8_0.gguf is modified, not an original
+Google release. Its SHA-256 is:
+db49bb67bc7b81f4636ee176d6bb1c72377face53e9f2662239a5d1087c5b673
+
+The accompanying README and evaluations describe the changes, development
+protocol, measured capability decrease and failed non-inferiority gate.
+This research release is not endorsed or certified by Google DeepMind.
