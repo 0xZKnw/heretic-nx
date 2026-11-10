@@ -226,4 +226,48 @@ their counts are recorded as incomplete, not invented full scores. Two frozen
 frontier points are tested at the full 96-token/104-row protocol: minimum
 development KL (penalty 1, scale 1) and zero development markers (penalty 10,
 scale 1.5). The former gets KL **0.020613 but 12/104 markers**, failing the
-target gate. The second paired retest is in progress.
+target gate. The second paired retest passes both proxy targets: **4/104 markers** (base
+95), **KL 0.04501414299 ≤ 0.05**, and 2/104 safe markers (base 3), with no empty
+responses. It is selected and saved as the final BF16 checkpoint, SHA-256
+`875e4722c380b7b8b916fdc97c83ed1dd518db5df6ad12d9c029b18d5c6d5e40`.
+The reused 104-row test participated in frontier selection, so this result is
+not an untouched holdout; fitting still uses separate training geometry.
+
+The 241-row MCQ result matches the base at 128/241 (53.11%). An expanded,
+post-selection 854-row check gets 446/854 (52.22%) versus base 450/854 (52.69%),
+difference -0.47 point, paired interval [-3.12, +2.19] points at alpha 0.025
+(two capability looks). Three-point noninferiority is still inconclusive.
+French prose and exact JSON smoke checks pass. Multiplication 37×19 fails in
+both original and edited BF16 checkpoints; do not attribute all arithmetic
+failure to the edit. Exactly 40 tensors change, shapes/dtypes remain intact,
+and all other tensors are bit-identical. Conditional merging deliberately
+leaves row norms unrestored; maximum relative row-norm drift is 5.81%.
+
+### Native Q8_0 release validation
+
+Convert the exact selected BF16 checkpoint and the official base independently
+with llama.cpp b12088-d1044bc82, then quantize both with the native Q8_0 recipe
+and four CPU threads. Final Q8 SHA-256 is
+`5c979a09b41acb8e225a9f66c7c006ef732cf84e5571dd87a855d30048eb187a`
+(1,846,237,824 bytes). Both BF16 GGUF conversion intermediates are removed
+after hashing, retaining the actual release and base Q8 evaluation artifact.
+
+Use the same one-BOS HF prompt token IDs, thinking disabled, greedy 96-token
+native completions, context 4096, one slot, full GPU offload and F16 KV cache.
+Attest model path/hash and runtime before and after each sequential arm. All
+128,000 first-token IDs are required for KL; finite native softmax values are
+normalized in float64. MCQ uses a greedy single-letter grammar, checked against
+the full-logit A/B/C/D argmax on the first three rows per arm. No concurrent
+GPU workloads. Initial driver assertions were corrected for the server's
+reported greedy temperature of 0 when requesting -1; aborted probes produced
+no promoted scores. The Q8 checkpoint passes the same proxy objectives:
+**3/104 target markers** versus matched original Q8 **96/104**, safe markers
+**1/104 versus 3/104**, no empty responses, first-token **KL 0.04633291462**.
+The 287-tensor native audit finds exactly 40 intended changed projections;
+all other tensor bytes, shapes and quantization types match the original Q8.
+Expanded native MCQ scores match at 438/854 (51.29%) per arm. The paired
+alpha-0.025 interval is [-3.18, +3.18] points; three-point noninferiority is
+inconclusive despite equal point estimates. The native probability parser
+passes a permuted-uniform roundtrip and rejects missing, duplicate,
+nonfinite and unnormalized entries. These are sampled checks, not proofs.
+Only compact reports and hashes are released; raw generations remain local.

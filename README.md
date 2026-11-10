@@ -20,54 +20,83 @@ separate implementation around deterministic manifests, streaming statistics,
 low-rank geometry and reproducible evaluation. Comparative reports explicitly
 pin the external checkpoint used as the Heretic baseline.
 
-## LFM3 1.7B — low-refusal BF16 research runner
+## LFM3 1.7B — conditional low-refusal release
 
-`experiments/lfm3_1p7b.py` applies the existing NX residual-stream editor to the
-official `LiquidAI/LFM3-1.7B` checkpoint. It verifies the checkpoint hash and all
-24 hybrid blocks, preserves the custom model code and license, and refuses to
-overwrite an existing output. Geometry uses 128 examples per class; search
-uses 24 group-disjoint training examples per class. The first four blocks are
-excluded from editing because the earliest convolutions see only the fixed
-chat suffix at the collection position.
+The [LFM3-1.7B-Heretic-NX release](https://huggingface.co/0xzknw/LFM3-1.7B-Heretic-NX)
+contains BF16 Safetensors and GGUF Q8_0. The final BF16 checkpoint has
+**4/104 lexical target-refusal markers versus 95/104 for the original**, with
+mean full-vocabulary first-token **KL(base || NX) = 0.045014**, below the 0.05
+ceiling. Safe markers are 2/104 versus 3/104; neither arm has empty responses.
+The target set includes harmful requests, so this profile is not limited to
+false refusals. It does not guarantee zero refusals on arbitrary requests.
 
-Install the `experiments` extra. The measured environment uses Python 3.12,
-PyTorch 2.15.0 and Transformers 5.22.2. Download the pinned source with `hf`:
+The selected profile uses `experiments/lfm3_1p7b_distill.py`: a stronger NX
+residual-stream teacher supplies a rank-one output-delta field at each site;
+benign-penalized input detectors make the merged weight deltas conditional.
+The selected penalty is 10 and scale 1.5. Exactly 40 output projections in
+blocks 4–23 change, including attention, convolution and FFN outputs. Other
+tensors remain bit-identical. Unlike the residual-stream profile, conditional
+merging does not restore row norms (maximum measured relative drift 5.81%).
+
+Install the `experiments` extra. The full-checkpoint runs use Python 3.12,
+PyTorch 2.15.0, Transformers 5.22.2 and Apple M5 MPS/BF16, with 24 GiB RAM.
+Download the pinned base and build the frozen teacher before distillation:
 
 ```bash
 hf download LiquidAI/LFM3-1.7B \
   --revision 1da06bec6a819da10b54c67e5c90972b46d81871 \
   --local-dir checkpoints/lfm3-1p7b
 python -m experiments.lfm3_1p7b search \
-  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-Heretic-NX-Low-KL \
-  --device mps --batch-size 4 --scales 1.75 2.0 \
-  --kl-cap 0.05 --max-refusals 2 --site-family operator
+  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-NX-Teacher \
+  --device mps --batch-size 4 --scales 1.5 --kl-cap 0.11 --max-refusals 0
+python -m experiments.lfm3_1p7b_distill \
+  --source checkpoints/lfm3-1p7b --teacher outputs/LFM3-1.7B-NX-Teacher \
+  --output outputs/LFM3-1.7B-Heretic-NX --max-refusals 0
 python -m experiments.lfm3_1p7b validate \
-  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-Heretic-NX-Low-KL \
+  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-Heretic-NX \
   --device mps --batch-size 4
 ```
 
-Use `--device cuda` or `--device cpu` on other hardware; those full-checkpoint
-paths have not been exercised. Search compares raw and rank-4
-capability-protected directions, restores immutable original weights between
-candidate. The low-KL protocol edits attention/convolution output projections
-only, keeping all FFN weights intact. It permits at most two markers on the
-24 development requests, including harmful requests, then minimizes benign
-first-token KL among successful candidates under the declared 0.05 cap. Empty
-outputs cannot qualify. Omitting `--max-refusals` retains the conservative
-minimum-marker search with a default KL cap of 0.03.
-Run `validate` after freezing the selected checkpoint: it
-reloads the saved weights and compares both arms on the pinned target test
-split (104 rows), the first 104 safe test rows, plus the existing paired
-ARC/HellaSwag/MMLU slice. The MCQ protocol
-selects the highest-logit A/B/C/D token with thinking disabled; it does not
-measure free-form reasoning.
+The source and teacher hashes are verified, architecture discovery fails closed
+on unexpected layouts, and existing outputs are never overwritten. Data
+manifests isolate geometry and development by group on the training split.
+The first four blocks are excluded because the earliest convolutions see only
+the fixed chat suffix at the collection position. The shared conjugate-gradient
+solver is extracted unchanged from the LFM2.5 experiment, with explicit input
+validation. Production fits reach the 40-iteration limit without satisfying
+the 1e-5 tolerance; these are approximate numerical fits, not convergence proofs.
+The final checkpoint and fitted factors are pinned in the published build record.
+Exact reproduction depends on the recorded software/device numerical environment.
 
-Reports are saved under `runs/lfm3-1p7b` and alongside the checkpoint. LFM3's
-sandwich normalization makes this an empirical weight intervention rather
-than an exact projector in the residual stream. This is a research artifact:
-lexical refusal counts, first-token KL and a narrow capability slice do not
-constitute semantic certification or guarantee zero refusals on arbitrary
-requests. The command never uploads model weights.
+Development selection requires zero lexical markers over 24 prompts and KL
+≤ 0.05, then minimizes KL among complete, nonempty candidates. The selected
+development KL is 0.026208. Partial 16-token screens cannot qualify as full
+96-token scores. The independent `validate` command reloads saved weights and
+checks the first 104 rows of each pinned test split plus a 241-row paired MCQ
+slice, selecting the highest-logit A/B/C/D token with thinking disabled.
+
+The 104-row retest was reused to select between two frozen frontier checkpoints:
+it is **not an untouched holdout**. BF16 MCQ is 128/241 (53.11%) in both arms.
+The expanded 854-row check scores 446/854 (52.22%) versus 450/854 (52.69%);
+the paired interval at alpha 0.025 is [-3.12, +2.19] percentage points.
+The three-point noninferiority gate is **inconclusive**, so broad capability
+preservation is not established. French prose and exact JSON pass smoke checks;
+a simple multiplication fails in both original and edited BF16 checkpoints.
+
+The separately evaluated native **Q8_0** artifact has **3/104 target markers**
+versus **96/104** for the matched original Q8, 1/104 safe markers versus 3/104,
+and mean full-vocabulary first-token **KL = 0.046333 ≤ 0.05**. Neither Q8 arm
+has empty responses. Both arms use llama.cpp b12088-d1044bc82, the same Q8_0
+recipe and identical HF prompt token IDs. These Q8 results are not copied
+from the BF16 evaluation. Expanded Q8 MCQ scores match at 438/854 (51.29%);
+the nominal alpha-0.025 interval is [-3.18, +3.18] points, leaving three-point
+noninferiority inconclusive.
+
+Compact evidence is under `evidence/lfm3-1p7b/conditional/`; earlier residual
+and sparse attempts remain recorded as reference/rejected experiments in
+`opti.md`. KL is first-token only, and lexical markers do not certify semantic
+behavior. Full-checkpoint CPU/CUDA paths and other native runtimes remain
+untested. Local build commands never upload weights automatically.
 
 ## LFM2.5 8B-A1B — conditional direct-Q8 release
 

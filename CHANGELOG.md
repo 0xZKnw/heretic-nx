@@ -20,6 +20,15 @@ All notable public changes to Heretic NX are documented here.
   alternatives remain reproducible research controls, with rejected results
   recorded in `opti.md`.
 
+- Conditional LFM3 teacher distillation with benign input penalties, a shared
+  validated matrix-free CG solver, factor-cache provenance and regression
+  checks for EOS exclusion, alias-free serialization and immutable originals.
+- LFM3 BF16 Safetensors and native Q8_0 release with separate format-specific
+  validation reports, preserved license, modification notice and weight hashes.
+  BF16 reaches 4/104 target markers with first-token KL 0.045014; expanded
+  capability noninferiority remains inconclusive. Thanks to Liquid AI,
+  @0xZKnw and the llama.cpp contributors.
+
 ### Fixed
 
 - Install GGUF and experiment test dependencies in CI.
