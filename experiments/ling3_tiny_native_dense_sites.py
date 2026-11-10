@@ -147,7 +147,7 @@ def main() -> None:
         revision=GOOD_REVISION,
         split=f"train[:{args.rows}]",
     )
-    target_all = load_dataset(BAD_DATASET, revision=BAD_REVISION, split="test")
+    target_all = load_dataset(BAD_DATASET, revision=BAD_REVISION, split="train")
     target_rows = target_all.select(range(args.rows))
     safe_tokens = encoded_prompts(tokenizer, [str(row["text"]) for row in safe_rows])
     target_tokens = encoded_prompts(tokenizer, [str(row["text"]) for row in target_rows])
@@ -185,6 +185,7 @@ def main() -> None:
         "candidate_weight_domain": "pinned Q8 GGUF only",
         "safe_dataset": [GOOD_DATASET, GOOD_REVISION],
         "target_dataset": [BAD_DATASET, BAD_REVISION],
+        "target_source_split": "train",
         "rows": args.rows,
         "thinking": "off",
         "safe_prompt_tokens_sha256": sha256_json(safe_tokens),

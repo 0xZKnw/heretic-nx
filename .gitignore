@@ -26,6 +26,7 @@ profiles/*.json
 *.safetensors
 checkpoints/
 outputs/
+runs/lfm3-1p7b*/
 
 # Locally cloned papers, datasets and third-party research repositories
 references/

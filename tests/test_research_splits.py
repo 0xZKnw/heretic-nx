@@ -383,6 +383,7 @@ def test_weight_fitting_workflows_do_not_read_the_public_test_suite() -> None:
     ling_sites = (root / "experiments/ling3_tiny_native_dense_sites.py").read_text()
     teacher_inputs = (root / "experiments/lfm25_8b_a1b_teacher_inputs.py").read_text()
     assert 'split="test"' not in ling_sites
+    assert 'split="train"' in ling_sites
     assert 'split="test"' not in teacher_inputs
     assert 'range(104)' not in teacher_inputs
     assert 'base-full.json' not in teacher_inputs

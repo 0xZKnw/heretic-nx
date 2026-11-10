@@ -1,0 +1,10 @@
+{
+  "llama_cpp": "b12088-d1044bc82",
+  "enable_thinking": false,
+  "temperature": 0,
+  "native_template_equals_hf": true,
+  "native_tokens_equal_hf": true,
+  "bos_count": 1,
+  "openai_compatible_chat_json_passed": true,
+  "response": "{\"ville\":\"Paris\",\"pays\":\"France\"}"
+}

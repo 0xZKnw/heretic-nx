@@ -1,0 +1,25 @@
+{
+  "status": "checked",
+  "runtime": {
+    "architecture": "aarch64",
+    "backend": "hybrid",
+    "bridge_protocol": 1,
+    "chat_enabled": true,
+    "commit": "ead60d0323e9",
+    "metal_helper_sha256": "165ae484d7581930ac8ef68f80ffed3eba23cd4d1d045e6ad2cf104873afd7ab",
+    "mlx_enabled": true,
+    "mlx_helper_sha256": "d09c94e6646bf1b4f548797908b6ac3924d2dc8722c27da35d75eea67d2434eb",
+    "native_flash_enabled": true,
+    "profile": "release",
+    "version": "2.0.4"
+  },
+  "short_prompt_count": 104,
+  "vocab": 128000,
+  "finite": true,
+  "reset_bit_exact": true,
+  "kl_cuda_exl3_to_mlxl3": 8.576117564294044e-05,
+  "argmax_agreement": 0.9903846153846154,
+  "mean_runtime_kl_limit": 0.002,
+  "long_tokens": 499,
+  "long_runtime_kl": 0.0002641779409441077
+}

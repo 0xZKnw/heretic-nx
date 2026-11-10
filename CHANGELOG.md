@@ -2,6 +2,53 @@
 
 All notable public changes to Heretic NX are documented here.
 
+## Unreleased
+
+### Added
+
+- A pinned BF16 LFM3-1.7B research runner using the existing NX residual-stream
+  editor, with raw and capability-protected directions, hash-partitioned
+  geometry/search data, a locked independent evaluation command, and Metal,
+  CUDA, and CPU execution paths. Only Metal has been exercised with the full
+  checkpoint. Thanks to @0xZKnw for the existing NX engine and LFM protocols.
+- Regression checks for LFM3's three block types, constant early convolution
+  states, hook cleanup, output preservation, KL and candidate selection.
+- An explicit zero-development-refusal target with drift-minimizing selection
+  and a declared KL budget; empty generated answers cannot satisfy the target.
+- Sparse LFM3 projection routing with a KL ceiling of 0.05. Mixer-only
+  portfolios preserve all FFN weights; shared-axis and sandwich-coordinate
+  alternatives remain reproducible research controls, with rejected results
+  recorded in `opti.md`.
+
+- Conditional LFM3 teacher distillation with benign input penalties, a shared
+  validated matrix-free CG solver, factor-cache provenance and regression
+  checks for EOS exclusion, alias-free serialization and immutable originals.
+- LFM3 BF16 Safetensors and native Q8_0 release with separate format-specific
+  validation reports, preserved license, modification notice and weight hashes.
+  BF16 reaches 4/104 target markers with first-token KL 0.045014; expanded
+  capability noninferiority remains inconclusive. Thanks to Liquid AI,
+  @0xZKnw and the llama.cpp contributors.
+
+- A validated LFM3 Heretic NX EXL3 8-bpw release for MLXL3, converted on one
+  Modal H100 with the existing published MCG recipe. Native first-token KL
+  is 0.04389918, with full-vocabulary parity, sliding-window, reset and bridge
+  chat checks on the production v2.0.4-beta.1 engine. Strict 4 and mixed 4.49
+  failed their KL budgets and are retained as rejected reports. Thanks to
+  Liquid AI, turboderp / ExLlamaV3 and @0xZKnw / MLXL3.
+
+### Fixed
+
+- Install GGUF and experiment test dependencies in CI.
+- Bound LFM3 safe-response validation to 104 pinned test rows.
+- Fit Ling dense-site geometry on the training split, preserving the public
+  test split for evaluation and recording the source split in its manifest.
+
+### Known limits
+
+- LFM3's sandwich normalization makes the weight edit an empirically evaluated
+  intervention. Lexical markers and first-token MCQ/KL checks do not establish
+  semantic task success or broad capability preservation.
+
 ## 0.3.0 — 2026-08-30
 
 ### Added
