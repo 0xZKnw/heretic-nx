@@ -1,0 +1,63 @@
+{
+  "runtime": "MLXL3 v2.0.4-beta.1",
+  "new_model": {
+    "repo": "0xzknw/LFM3-1.7B-Heretic-NX-EXL3",
+    "variants": [
+      {
+        "id": "8bpw",
+        "label": "8bpw",
+        "size_bytes": 2536222762,
+        "preview": {
+          "model_type": "lfm3",
+          "architecture_supported": false,
+          "maximum_context": 262144,
+          "kv_bytes_per_token": null,
+          "recurrent_bytes": null
+        }
+      }
+    ]
+  },
+  "original_model": {
+    "repo": "0xzknw/LFM3-1.7B-EXL3",
+    "variants": [
+      {
+        "id": "4.49bpw",
+        "label": "4.49bpw",
+        "size_bytes": 1892974618,
+        "preview": {
+          "model_type": "lfm3",
+          "architecture_supported": false,
+          "maximum_context": 262144,
+          "kv_bytes_per_token": null,
+          "recurrent_bytes": null
+        }
+      },
+      {
+        "id": "4bpw",
+        "label": "4bpw",
+        "size_bytes": 1803321258,
+        "preview": {
+          "model_type": "lfm3",
+          "architecture_supported": false,
+          "maximum_context": 262144,
+          "kv_bytes_per_token": null,
+          "recurrent_bytes": null
+        }
+      },
+      {
+        "id": "8bpw",
+        "label": "8bpw",
+        "size_bytes": 2536276753,
+        "preview": {
+          "model_type": "lfm3",
+          "architecture_supported": false,
+          "maximum_context": 262144,
+          "kv_bytes_per_token": null,
+          "recurrent_bytes": null
+        }
+      }
+    ]
+  },
+  "native_model_load_and_chat_passed": true,
+  "recommended_path": "hf download the complete 8bpw folder, then load the local folder in MLXL3"
+}

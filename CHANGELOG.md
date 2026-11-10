@@ -29,6 +29,13 @@ All notable public changes to Heretic NX are documented here.
   capability noninferiority remains inconclusive. Thanks to Liquid AI,
   @0xZKnw and the llama.cpp contributors.
 
+- A validated LFM3 Heretic NX EXL3 8-bpw release for MLXL3, converted on one
+  Modal H100 with the existing published MCG recipe. Native first-token KL
+  is 0.04389918, with full-vocabulary parity, sliding-window, reset and bridge
+  chat checks on the production v2.0.4-beta.1 engine. Strict 4 and mixed 4.49
+  failed their KL budgets and are retained as rejected reports. Thanks to
+  Liquid AI, turboderp / ExLlamaV3 and @0xZKnw / MLXL3.
+
 ### Fixed
 
 - Install GGUF and experiment test dependencies in CI.

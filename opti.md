@@ -271,3 +271,116 @@ inconclusive despite equal point estimates. The native probability parser
 passes a permuted-uniform roundtrip and rejects missing, duplicate,
 nonfinite and unnormalized entries. These are sampled checks, not proofs.
 Only compact reports and hashes are released; raw generations remain local.
+
+
+### EXL3-2026-11-10 — Heretic NX conversion using the published MLXL3 recipe
+
+Requested continuation: convert the published final Heretic NX checkpoint for
+MLXL3, using one Modal H100 and the owner's already published recipe. Source
+`0xzknw/LFM3-1.7B-Heretic-NX@56a40b05ac6affe579c9aa3c7def410c24f75b5c`,
+weight SHA-256 `875e4722c380b7b8b916fdc97c83ed1dd518db5df6ad12d9c029b18d5c6d5e40`.
+Recipe reference `0xzknw/LFM3-1.7B-EXL3@794219432967af4826d8276d370b2d1676d1f870`,
+4.4892703863 projection bpw: 61 projections at 4 bits, 24 FFN down at 5,
+57 attention/conv outputs at 6; embeddings/head at 16 bits, MCG, automatic
+output scales, scaled Hessians, calibration 250 x 2048 bundled tokens. Reuse
+ExLlamaV3 1.6.6/bd1f519 wheel and existing bounded conversion helpers.
+
+Preflight checks source hash, model config and all 142 recipe projection
+shapes on CPU before requesting the H100. One GPU worker, retries disabled,
+conversion timeout 1800s, overall worker timeout 3600s. No speed benchmark.
+Check descriptor allocation, all expected tensors and finite payloads; compare
+first-token full-vocabulary logits on the same 104 safe prompts with original
+and edited BF16 references. Re-measure target markers where the actual runtime
+allows the same greedy 96-token protocol. Validate local MLXL3 Metal loading,
+nonempty finite logits, reference parity and a real generation. Publish a
+separate EXL3 directory/repo only with explicit format-specific reports;
+existing Safetensors/GGUF weights remain unchanged. Status: preparation.
+
+Local disk reached 112 MiB free during EXL3 preparation. Removed only
+regenerable task intermediates: the matched original Q8 GGUF (hash retained
+in gguf-build.json), the verified pinned source weight download (source code
+and config retained), and fitted-detector activation caches (hashes retained
+in build.json; fitted factors and final checkpoints preserved). No benchmark
+or quantization was restarted. The first CrossHair invocation exposed the
+helper's documented ValueError for invalid bitrate 0; invalid-bit rejection
+is already tested. Repeat symbolic exploration over the actual valid 4/8-bit
+helper domain; the initial invalid-domain diagnostic is retained.
+
+The mixed 4.49-bpw recipe is the first requested candidate. If its measured
+combined KL exceeds 0.05 or the target marker cap, retain the rejected report
+and test the existing published 8-bpw recipe as a higher-fidelity fallback,
+without relaxing either quality criterion. Do not silently present BF16 or
+GGUF metrics as EXL3 measurements. This fallback is preregistered before the
+first EXL3 quality results are available.
+
+Mixed 4.49 bpw conversion completed on H100. All 142 projection allocations
+and 713 output tensors pass structure/finiteness checks, and the 104-row
+marker counts are target 3 / safe 1 with no empty outputs. However, measured
+first-token KL is 0.21471471835 to original HF FP32 and 0.15222477184 to
+Heretic HF FP32: rejected for the 0.05 drift ceiling. Reports and weights
+retained privately. Before converting the published 8-bpw fallback, compare
+unquantized ExLlama to the same Heretic HF FP32 reference on all 104 safe
+rows; require KL <= 0.005 to exclude an engine incompatibility. Reuse those
+reference arrays in the fallback measurement. Uniform 8 bits, head/embedding
+16, MCG, auto scales, 250x2048 calibration, no scaled Hessian, matching the
+existing published 8-bpw allocation. No simultaneous H100 workers.
+
+Owner steering: drop 4.49 bpw and compare the existing strict 4/8-bpw
+recipes instead. Mixed checkpoint will not be published. A local Modal CLI
+file download had the right byte count but a mismatched SHA-256; integrity
+check rejected it before any MLXL3 inference, and the unneeded local mixed
+copy was removed. Reports and expected/actual hashes retained in task logs.
+Use streaming Modal SDK reads with checksum verification for selected 4/8
+weights. Unquantized ExLlama/HF FP32 control passed at KL 0.00004372903205
+over 104 safe rows. Strict 8-bpw conversion is running. After it completes,
+compare strict 4 bpw with its published unscaled-Hessian/MCG/auto-scales
+recipe and unchanged 250x2048 calibration, head/embedding 16. Retain all
+quality criteria, and publish only passing formats.
+
+User revised only the strict 4-bpw KL budget during conversion, before any
+4-bpw quality result: allow +0.05 nats relative to the measured 8-bpw KL
+(0.043624878533), giving cap **0.093624878533**.
+The 8-bpw cap remains 0.05; all other checks stay unchanged. Frozen budget
+record: work/exl3-conversion/quality-budgets.json. The running remote worker
+still records its original 0.05 gate; retain that raw report and apply the
+newly authorized budget explicitly in the final acceptance report, without
+rerunning or changing the measured logits/generations.
+
+Strict 8 bpw completed on H100: target markers 3/104, safe markers 2/104,
+no empty responses; original-FP32-to-EXL3 first-token KL
+0.043624878533, NX-FP32-to-EXL3 KL
+0.001415807885. All 142 projections and 713 tensors
+pass integrity/finiteness checks. Streaming SDK download passes every file
+SHA-256. Weight file 2,518,073,115 bytes, SHA-256
+8a7c4200d8c4cb5a994ceb7107e53f7b6464be1e8c8f697dc9ac961a2b3489c5.
+
+Published production MLXL3 engine v2.0.4-beta.1/ead60d0323e9 validates all
+104 prompt logits: CUDA-EXL3-to-MLXL3 mean KL 0.00008576118, argmax
+agreement 99.04%, finite 128,000-value outputs and bit-exact reset replay.
+The 499-token SWA check passes with runtime KL 0.00026417794. Two-turn
+production NDJSON bridge chat passes independent CEDAR-42 recall. No speed
+benchmark was run. Reusing the unchanged original FP32 reference from the
+4-bit job gives MLXL3 first-token model KL **0.043899179649 <= 0.05**; CUDA
+recomputation matches the original 8-bit result within 1e-6.
+
+Strict 4 bpw fails the revised cap: measured combined first-token KL
+0.464836920468 > 0.093624878533; quantization
+drift versus NX FP32 0.353066835600. A stop request
+after the decisive KL failure was rejected by the CLI's interactive prompt
+(no --yes flag); the job naturally finished before follow-up. Final 4-bit
+counts are complete: target 4/104, safe 0/104, no empties. Preserve both the
+pre-stop snapshot and full raw report; reject on KL and do not publish its
+weights. All three Modal apps are now confirmed stopped with zero tasks.
+Only strict 8 bpw is accepted for publication.
+
+EXL3 8-bpw initial publication verified publicly at
+0xzknw/LFM3-1.7B-Heretic-NX-EXL3@4ed8d37eb05d7373624f78064b4b20bb74148b83,
+weight SHA and size match the tested artifact, all files present, selected
+metadata downloaded byte-exact. Production Hub details discovers 8bpw but
+its preview marks lfm3 unsupported, exactly as for every variant of the
+owner's original LFM3-1.7B-EXL3 repo. Model metadata is correct; native
+loading/104 forwards/long/reset/chat all pass. Document the verified
+hf-download/local-folder path and this existing preview limitation rather
+than spoofing the architecture or changing the unrelated runtime.
+
+EXL3 final metadata publication verified at a7cff0c15b6b1ab26ea77e29bd7a4ba66b0a25b8; original eight-bit weight hash unchanged. All publication files verified, model card and Hub-preview workaround documentation match remote bytes.

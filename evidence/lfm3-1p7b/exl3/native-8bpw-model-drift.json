@@ -1,0 +1,13 @@
+{
+  "count": 104,
+  "vocab": 128000,
+  "kl_original_hf_fp32_to_exl3_mlxl3": 0.0438991796493277,
+  "kl_original_hf_fp32_to_exl3_cuda": 0.043624878533158,
+  "kl_cap": 0.05,
+  "passed": true,
+  "source_model": "LiquidAI/LFM3-1.7B",
+  "source_revision": "1da06bec6a819da10b54c67e5c90972b46d81871",
+  "reference_dtype": "FP32 eager on H100; original BF16 weight file loaded in FP32",
+  "native_runtime": "MLXL3 engine v2.0.4-beta.1 / ead60d0323e9",
+  "evaluation_inputs_sha256": "f2d835e9d102c51bb07a1a1409567d208d007a5dcb11ba3c4003ab5d19958c15"
+}

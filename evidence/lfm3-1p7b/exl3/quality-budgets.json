@@ -1,0 +1,9 @@
+{
+  "reference_format": "EXL3 8bpw",
+  "reference_kl": 0.04362487853315185,
+  "additional_kl_allowance": 0.05,
+  "four_bpw_kl_cap": 0.09362487853315185,
+  "eight_bpw_kl_cap": 0.05,
+  "target_marker_cap": 4,
+  "declared_before_four_bpw_quality_results": true
+}

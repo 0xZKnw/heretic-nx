@@ -98,6 +98,31 @@ and sparse attempts remain recorded as reference/rejected experiments in
 behavior. Full-checkpoint CPU/CUDA paths and other native runtimes remain
 untested. Local build commands never upload weights automatically.
 
+## LFM3 1.7B — EXL3 for MLXL3
+
+The [EXL3 8-bpw release](https://huggingface.co/0xzknw/LFM3-1.7B-Heretic-NX-EXL3)
+uses the owner's existing strict 8-bit MCG recipe: 142 quantized projections,
+16-bit embeddings/head, automatic output scales, 250 × 2,048 calibration
+tokens, no scaled Hessians, ExLlamaV3 1.6.6 on one Modal H100. The complete
+`8bpw/` folder is 2.54 GB including tokenizer/metadata; weights are
+2,518,073,115 bytes. No new behavioral edit is applied during conversion.
+
+EXL3 CUDA has 3/104 target markers, 2/104 safe markers, no empty responses,
+and original-HF-FP32-to-EXL3 first-token KL **0.04362488**. The same format in
+production MLXL3 engine v2.0.4-beta.1 has first-token KL **0.04389918** over
+the 104 benign prompts. Both satisfy the 0.05 budget. Native validation covers
+104 finite full-vocabulary forwards, mean CUDA/native runtime KL 0.00008576,
+a 499-token sliding-window case (runtime KL 0.00026418), bit-exact reset and
+the real two-turn Desktop bridge chat protocol.
+
+Strict 4 bpw and mixed 4.49 bpw are rejected, with respective combined KL
+0.46483692 and 0.21471472. Even the relaxed four-bit cap (eight-bit CUDA KL
+plus 0.05 = 0.09362488) is exceeded. Only eight-bit weights are published;
+all trial reports remain in `evidence/lfm3-1p7b/exl3/` and `opti.md`.
+These are runtime-specific first-token/lexical checks, not broad EXL3
+capability certification. The original 104-row retest was reused in source
+frontier selection, and full EXL3 capability noninferiority is unmeasured.
+
 ## LFM2.5 8B-A1B — conditional direct-Q8 release
 
 The 8B-A1B release introduces conditional direct-Q8 deltas: an eight-site
