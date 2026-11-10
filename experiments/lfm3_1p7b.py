@@ -18,6 +18,7 @@ import torch
 from safetensors.torch import load_file, save_file
 
 from heretic_nx.data.research_splits import build_research_split, verify_manifest_texts
+from heretic_nx.edits.activation_op import ActivationOperator
 from heretic_nx.edits.residual_stream import (
     apply_residual_stream_weight_edits,
     build_residual_stream_weight_editors,
@@ -306,6 +307,66 @@ def fit_profiles(safe, target):
     }
 
 
+def sandwich_weight_operator(axis, gain, row_norms):
+    """Express a residual direction in the editor's row-normalized coordinates."""
+    axis, gain, row_norms = (
+        value.detach().float().cpu() for value in (axis, gain, row_norms)
+    )
+    if axis.ndim != 1 or gain.shape != axis.shape or row_norms.shape != axis.shape:
+        raise ValueError("axis, sandwich gain and row norms must be aligned vectors")
+    coordinates = gain * row_norms
+    if (
+        not torch.isfinite(axis).all()
+        or not torch.isfinite(coordinates).all()
+        or bool((row_norms <= 0).any())
+        or bool((coordinates.abs() <= 1e-7).any())
+    ):
+        raise ValueError("sandwich coordinates must be finite and invertible")
+    return ActivationOperator(
+        (axis / coordinates)[:, None], (axis * coordinates)[:, None], 1.0
+    )
+
+
+def bind_profile(
+    model, registry, axes, originals, *, shared_axis=None, sandwich_aware=False
+):
+    if shared_axis is not None:
+        axes = {layer: axes[shared_axis] for layer in axes}
+    editors = build_residual_stream_weight_editors(registry, axes)
+    if not sandwich_aware:
+        return editors
+    result = []
+    for editor in editors:
+        layer = model.model.layers[editor.site.layer]
+        norm = (
+            layer.post_ffn_norm
+            if editor.site.family == "ffn"
+            else layer.post_operator_norm
+        )
+        row_norms = originals[editor.site_id].float().norm(dim=1)
+        operator = sandwich_weight_operator(
+            editor.evidence.axis, norm.weight, row_norms
+        )
+        result.append(replace(editor, operator=operator))
+    return tuple(result)
+
+
+def select_registry(registry, first_layer, family):
+    families = {
+        "all": {"ffn", "gqa", "liv"},
+        "ffn": {"ffn"},
+        "operator": {"gqa", "liv"},
+    }[family]
+    return replace(
+        registry,
+        sites=tuple(
+            site
+            for site in registry.sites
+            if site.layer >= first_layer and site.family in families
+        ),
+    )
+
+
 def search(args):
     if args.output.exists():
         raise FileExistsError(f"refusing to overwrite {args.output}")
@@ -315,10 +376,7 @@ def search(args):
     write_json(args.run_dir / "splits.json", manifests)
     model, tokenizer = load_model(args.source, args.device)
     registry = validate_layout(model)
-    registry = replace(
-        registry,
-        sites=tuple(site for site in registry.sites if site.layer >= FIRST_EDIT_LAYER),
-    )
+    registry = select_registry(registry, args.first_edit_layer, args.site_family)
     cache = args.run_dir / "residuals.safetensors"
     identity = sha256_json(
         {
@@ -348,6 +406,17 @@ def search(args):
     profiles = fit_profiles(states["safe"], states["target"])
     editors = build_residual_stream_weight_editors(registry, profiles["raw"])
     originals = snapshot_residual_stream_weights(model, editors)
+
+    def bind(axes):
+        return bind_profile(
+            model,
+            registry,
+            axes,
+            originals,
+            shared_axis=args.shared_axis,
+            sandwich_aware=args.sandwich_aware,
+        )
+
     base_logp = log_probs(model, tokenizer, data["safe"]["selection"], args.batch_size)
     baseline = refusals(model, tokenizer, data["target"]["selection"], args.batch_size)
     report = {
@@ -363,13 +432,18 @@ def search(args):
         "enable_thinking": False,
         "kl_cap": args.kl_cap,
         "max_selection_refusals": args.max_refusals,
+        "shared_axis_layer": args.shared_axis,
+        "sandwich_aware": args.sandwich_aware,
+        "first_edit_layer": args.first_edit_layer,
+        "site_family": args.site_family,
+        "active_sites": len(editors),
         "baseline": baseline,
         "candidates": [],
         "profile_limit": "LFM3 sandwich normalization makes residual edits an empirical intervention, not an exact residual projector.",
         "claim_limit": "Lexical refusal proxy only; no semantic judge or capability certification.",
     }
     for profile, axes in profiles.items():
-        editors = build_residual_stream_weight_editors(registry, axes)
+        editors = bind(axes)
         for scale in args.scales:
             strengths = {e.site_id: scale for e in editors}
             apply_residual_stream_weight_edits(model, editors, originals, strengths)
@@ -395,9 +469,7 @@ def search(args):
         kl_cap=args.kl_cap,
         max_refusals=args.max_refusals,
     )
-    editors = build_residual_stream_weight_editors(
-        registry, profiles[selected["profile"]]
-    )
+    editors = bind(profiles[selected["profile"]])
     apply_residual_stream_weight_edits(
         model, editors, originals, {e.site_id: selected["scale"] for e in editors}
     )
@@ -551,6 +623,17 @@ def main():
     parser.add_argument("--scales", type=float, nargs="+", default=[0.5, 1.0, 1.5])
     parser.add_argument("--kl-cap", type=float, default=KL_CAP)
     parser.add_argument("--max-refusals", type=int)
+    parser.add_argument("--shared-axis", type=int, choices=range(FIRST_EDIT_LAYER, 24))
+    parser.add_argument("--sandwich-aware", action="store_true")
+    parser.add_argument(
+        "--first-edit-layer",
+        type=int,
+        choices=range(FIRST_EDIT_LAYER, 24),
+        default=FIRST_EDIT_LAYER,
+    )
+    parser.add_argument(
+        "--site-family", choices=("all", "ffn", "operator"), default="all"
+    )
     args = parser.parse_args()
     if args.batch_size < 1 or any(not 0 < value <= 4 for value in args.scales):
         parser.error("batch size must be positive and scales in (0, 4]")

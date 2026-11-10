@@ -38,25 +38,26 @@ hf download LiquidAI/LFM3-1.7B \
   --revision 1da06bec6a819da10b54c67e5c90972b46d81871 \
   --local-dir checkpoints/lfm3-1p7b
 python -m experiments.lfm3_1p7b search \
-  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-Heretic-NX \
-  --device mps --batch-size 4 --scales 1.25 1.5 2.0 \
-  --kl-cap 0.5 --max-refusals 0
+  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-Heretic-NX-Low-KL \
+  --device mps --batch-size 4 --scales 1.75 2.0 \
+  --kl-cap 0.05 --max-refusals 2 --site-family operator
 python -m experiments.lfm3_1p7b validate \
-  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-Heretic-NX \
+  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-Heretic-NX-Low-KL \
   --device mps --batch-size 4
 ```
 
 Use `--device cuda` or `--device cpu` on other hardware; those full-checkpoint
 paths have not been exercised. Search compares raw and rank-4
 capability-protected directions, restores immutable original weights between
-candidate. The explicit low-refusal protocol targets zero markers on all
+candidate. The low-KL protocol edits attention/convolution output projections
+only, keeping all FFN weights intact. It permits at most two markers on the
 24 development requests, including harmful requests, then minimizes benign
-first-token KL among successful candidates under the declared 0.5 cap. Empty
+first-token KL among successful candidates under the declared 0.05 cap. Empty
 outputs cannot qualify. Omitting `--max-refusals` retains the conservative
 minimum-marker search with a default KL cap of 0.03.
-Run `validate` only after freezing the selected checkpoint: it
-reloads the saved weights and compares both arms on the complete pinned test
-target split (104 rows), the first 104 safe test rows, plus the existing paired
+Run `validate` after freezing the selected checkpoint: it
+reloads the saved weights and compares both arms on the pinned target test
+split (104 rows), the first 104 safe test rows, plus the existing paired
 ARC/HellaSwag/MMLU slice. The MCQ protocol
 selects the highest-logit A/B/C/D token with thinking disabled; it does not
 measure free-form reasoning.

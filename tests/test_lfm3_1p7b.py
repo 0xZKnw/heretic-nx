@@ -7,15 +7,20 @@ from torch import nn
 
 from experiments.lfm3_1p7b import (
     KL_CAP,
+    bind_profile,
     choose_candidate,
     collect,
     compact_metrics,
     fit_profiles,
     mean_kl,
+    sandwich_weight_operator,
     search,
+    select_registry,
     validate_layout,
 )
+from heretic_nx.geometry.contrastive import ContrastiveAxis
 from heretic_nx.hashing import sha256_json
+from heretic_nx.model import SemanticSite, SemanticSiteRegistry
 
 
 def test_delivered_metrics_hash_raw_responses_without_mutating_local_reports():
@@ -103,6 +108,15 @@ def test_all_three_lfm3_block_types_are_discovered_and_fail_closed():
         validate_layout(model)
 
 
+def test_sparse_registry_keeps_only_late_mixers_without_mutating_the_full_layout():
+    registry = validate_layout(TinyModel())
+    selected = select_registry(registry, 8, "operator")
+    assert len(selected.sites) == 16
+    assert all(s.layer >= 8 and s.family in {"gqa", "liv"} for s in selected.sites)
+    assert len(registry.by_family("ffn")) == 24
+    assert len(select_registry(registry, 20, "ffn").sites) == 4
+
+
 @pytest.mark.parametrize(
     "field,value",
     [("model_type", "lfm2"), ("hidden_size", 1024), ("layer_types", ["conv"] * 24)],
@@ -175,6 +189,61 @@ def test_explicit_refusal_target_selects_the_least_drifting_successful_candidate
     assert choose_candidate(rows, 22, kl_cap=0.5, max_refusals=1) is rows[1]
     with pytest.raises(RuntimeError):
         choose_candidate(rows, 22, kl_cap=0.05, max_refusals=0)
+
+
+def test_sandwich_operator_matches_the_residual_coordinate_projection():
+    generator = torch.Generator().manual_seed(48)
+    for _ in range(32):
+        axis = torch.nn.functional.normalize(torch.randn(8, generator=generator), dim=0)
+        gain = torch.randn(8, generator=generator).sign() * (
+            torch.rand(8, generator=generator) + 0.1
+        )
+        norms = torch.rand(8, generator=generator) + 0.1
+        hidden = torch.randn(4, 8, generator=generator)
+        op = sandwich_weight_operator(axis, gain, norms)
+        residual = hidden * (gain * norms)
+        expected = residual - (residual @ axis[:, None]) * axis
+        assert torch.allclose(
+            op.apply(hidden) * (gain * norms), expected, atol=1e-6, rtol=1e-5
+        )
+
+
+@pytest.mark.parametrize("family", ["ffn", "gqa", "liv"])
+def test_shared_axis_is_bound_in_the_correct_branch_coordinates(family):
+    layer = SimpleNamespace(
+        post_ffn_norm=nn.LayerNorm(4), post_operator_norm=nn.LayerNorm(4)
+    )
+    with torch.no_grad():
+        layer.post_ffn_norm.weight.copy_(torch.tensor([0.5, 2, 1, 1]))
+        layer.post_operator_norm.weight.fill_(10)
+    model = SimpleNamespace(model=SimpleNamespace(layers=[None] * 4 + [layer]))
+    site = SemanticSite("test", 4, family, "ffn_out", "test", "Linear", 4, 4, 4, "test")
+    registry = SemanticSiteRegistry((site,), "test")
+    local = ContrastiveAxis(torch.tensor([0.0, 0.0, 1.0, 0.0]), 1, 1, 0, 3)
+    shared = ContrastiveAxis(torch.tensor([1.0, 1.0, 0.0, 0.0]) / 2**0.5, 1, 1, 0, 3)
+    editors = bind_profile(
+        model,
+        registry,
+        {4: local, 12: shared},
+        {"test": torch.diag(torch.tensor([2.0, 3.0, 4.0, 5.0]))},
+        shared_axis=12,
+        sandwich_aware=True,
+    )
+    coordinates = (
+        torch.tensor([1.0, 6.0, 4.0, 5.0])
+        if family == "ffn"
+        else torch.tensor([20.0, 30.0, 40.0, 50.0])
+    )
+    assert torch.allclose(editors[0].operator.a[:, 0] * coordinates, shared.axis)
+    assert torch.allclose(editors[0].operator.b[:, 0] / coordinates, shared.axis)
+
+
+@pytest.mark.parametrize(
+    "bad", [torch.zeros(8), torch.full((8,), float("nan")), torch.ones(7)]
+)
+def test_sandwich_operator_rejects_singular_or_invalid_coordinates(bad):
+    with pytest.raises(ValueError):
+        sandwich_weight_operator(torch.ones(8), bad, torch.ones(8))
 
 
 def test_kl_matches_hand_computed_distribution_and_rejects_invalid_inputs():

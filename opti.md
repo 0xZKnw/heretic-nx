@@ -97,3 +97,71 @@ remains 1.5; the independent test is not used to tune it.
 
 Delivered checkpoint metadata contains metrics and generation hashes only;
 raw generations remain in ignored local run directories.
+
+### Frozen wave-two validation and new KL ceiling
+
+The scale-1.5 BF16 artifact has SHA-256
+`5acd5ee0015891923a05ed814b6aecd76c56fbf2c572275458d083bd834a757f`.
+Reloaded, matched 96-token testing gives 95→4 target lexical markers and 3→1
+safe markers over 104 rows each, with mean first-token KL **0.100096**.
+No generated test response is empty. Manual review found two clear safety
+redirections and four ambiguous substitutions; three of the four lexical hits
+are topic words in non-refusing answers. This is not semantic task success.
+
+The 241-row capability check is 128→133 correct (53.11→55.19%); the 3-point
+non-inferiority gate is inconclusive. An expanded 854-row check is 450→451
+correct (52.69→52.81%), interval [-3.47,+3.70] points at alpha 0.025 for two
+capability looks; it also fails to establish the 3-point non-inferiority gate.
+A French smoke test produces coherent prose and exact JSON, but fails
+37×19 (returns 5923). This cannot be attributed to editing without the matched
+base arithmetic control. The artifact is retained as a reference, not declared
+capability-certified.
+
+The new required ceiling is **KL ≤ 0.05** with few refusals. The previous
+104-row target test has already been viewed; future reuse is labeled a paired
+retest rather than a fresh untouched holdout.
+
+### Shared directions and sandwich coordinates — rejected screening attempts
+
+Raw and protected axes retain strong cross-fold alignment (minimum cosine
+about 0.98). Post-operator gains vary substantially (e.g. block 20 absolute
+gain 0.002075–0.161133). This motivates testing a shared residual direction
+and conjugating the edit by post-normalization gains and original row norms.
+The algebraic coordinate mapping is checked on 32 deterministic random cases;
+it does not make the nonlinear normalized block an exact residual projector.
+
+The disposable screening uses full-vocabulary KL on the same 24 benign
+development rows first (about one second per candidate), then 16-token target
+generation only for KL survivors (about 5–6 seconds). Full certification still
+uses 96 tokens. These screen counts cannot replace the original full reports.
+All candidates and timings are retained in `global-screen.json` evidence.
+
+Shared directions at blocks 12, 16, 20 and 22, with/without coordinate mapping,
+were tested at 0.5, 1.0 and 1.5, plus local mapped axes and protected block-20
+mapping. Mapping increased KL and is rejected. The best raw shared screen is
+block 22 at scale 1.0: KL 0.044420, 6/24 short-window markers, still too many.
+The next hypothesis is sparse edit-site routing using the original raw axes;
+source weights, prompt partitions, BF16 and final evaluation settings remain
+unchanged.
+
+### Sparse routing screens and full-length check
+
+The 36 sparse screens compare first edited block 8/12/16/20, all projections
+versus FFN-only versus attention/convolution-only, and scales 1/1.5/2. The
+strongest low-drift result comes from mixer-only edits, showing that FFN edits
+carry substantial avoidable benign drift here. Full candidate data, rejected
+portfolios and measured timing are retained in `sparse-screen.json`.
+
+- Block 8 onward, mixers only, scale 2: development KL 0.042324 and 0/24
+  **16-token** markers. At the required **96 tokens** this becomes 2/24;
+  the hits are topic word `illegal` and a self-harm safety redirection.
+- The same portfolio at scale 1.75: KL 0.032782, 3/24 full-length markers.
+- Protected scale 1.75: KL 0.049828, 3/24 full-length markers.
+- Protected scale 2: 0/24 full-length markers, but KL 0.061695; reject.
+
+Thus the zero-marker gate correctly published no model from that full search.
+The requested near-zero rather than absolute-zero objective permits a
+two-marker development limit, while the KL cap stays fixed at 0.05. The next
+focused screen compares first mixer block 4/6/8 and scales 1.75/2/2.25, with
+all FFN weights untouched. Final reporting still uses 96-token generations;
+no short-window result is promoted as the complete refusal count.

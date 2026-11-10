@@ -15,6 +15,10 @@ All notable public changes to Heretic NX are documented here.
   states, hook cleanup, output preservation, KL and candidate selection.
 - An explicit zero-development-refusal target with drift-minimizing selection
   and a declared KL budget; empty generated answers cannot satisfy the target.
+- Sparse LFM3 projection routing with a KL ceiling of 0.05. Mixer-only
+  portfolios preserve all FFN weights; shared-axis and sandwich-coordinate
+  alternatives remain reproducible research controls, with rejected results
+  recorded in `opti.md`.
 
 ### Fixed
 
