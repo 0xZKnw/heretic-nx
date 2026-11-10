@@ -6,19 +6,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import torch
 from gguf import GGUFReader
 from gguf.quants import dequantize
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
-import torch
 
 from experiments.lfm25_8b_a1b_q8_build import RUN_DIR, SOURCE
 from experiments.lfm25_8b_a1b_q8_prime_build import (
     RANKING_REPORT,
     load_verified_prime_merge,
 )
-from experiments.lfm25_8b_a1b_teacher_inputs import OUTPUT as INPUTS
 from experiments.lfm25_8b_a1b_teacher_inputs import MANIFEST as INPUT_MANIFEST
+from experiments.lfm25_8b_a1b_teacher_inputs import OUTPUT as INPUTS
 from experiments.lfm25_8b_a1b_teacher_inputs import TEACHER_MERGE
 from heretic_nx.hashing import (
     canonical_json,
@@ -26,7 +26,9 @@ from heretic_nx.hashing import (
     sha256_file,
     sha256_json,
 )
-
+from heretic_nx.optimize.ridge import (
+    conjugate_gradient as fit_benign_penalized_detector,
+)
 
 OPERATORS = RUN_DIR / "prime-site-operators.safetensors"
 OUTPUT = RUN_DIR / "teacher-op-distilled.safetensors"
@@ -37,52 +39,16 @@ CG_TOLERANCE = 1e-5
 RIDGE_FRACTION = 1e-4
 
 
-def conjugate_gradient(
-    harmful: torch.Tensor,
-    safe: torch.Tensor,
-    exact: torch.Tensor,
-    *,
-    safe_lambda: float,
-) -> tuple[torch.Tensor, int, float]:
-    harmful_count = float(len(harmful))
-    safe_count = float(len(safe))
-    ridge = float(
-        RIDGE_FRACTION
-        * (harmful.square().mean() + safe_lambda * safe.square().mean())
+def conjugate_gradient(harmful, safe, exact, *, safe_lambda):
+    return fit_benign_penalized_detector(
+        harmful,
+        safe,
+        exact,
+        safe_lambda=safe_lambda,
+        steps=CG_STEPS,
+        tolerance=CG_TOLERANCE,
+        ridge_fraction=RIDGE_FRACTION,
     )
-
-    def covariance(values: torch.Tensor, vector: torch.Tensor, count: float) -> torch.Tensor:
-        return values.T @ (values @ vector) / count
-
-    def system(vector: torch.Tensor) -> torch.Tensor:
-        return (
-            covariance(harmful, vector, harmful_count)
-            + safe_lambda * covariance(safe, vector, safe_count)
-            + ridge * vector
-        )
-
-    right = covariance(harmful, exact, harmful_count)
-    solution = torch.zeros_like(right)
-    residual = right.clone()
-    direction = residual.clone()
-    initial_norm = torch.linalg.vector_norm(residual).clamp_min(1e-12)
-    residual_square = torch.dot(residual, residual)
-    residual_ratio = 1.0
-    iterations = 0
-    for iteration in range(1, CG_STEPS + 1):
-        product = system(direction)
-        alpha = residual_square / torch.dot(direction, product).clamp_min(1e-20)
-        solution = solution + alpha * direction
-        new_residual = residual - alpha * product
-        residual_ratio = float(torch.linalg.vector_norm(new_residual) / initial_norm)
-        iterations = iteration
-        if residual_ratio <= CG_TOLERANCE:
-            break
-        new_square = torch.dot(new_residual, new_residual)
-        direction = new_residual + (new_square / residual_square) * direction
-        residual = new_residual
-        residual_square = new_square
-    return solution.detach().cpu(), iterations, residual_ratio
 
 
 def correlation(left: torch.Tensor, right: torch.Tensor) -> float:
@@ -150,12 +116,10 @@ def main() -> None:
         != current_bindings["teacher_artifact_sha256"]
         or input_manifest.get("geometry_provenance_sha256")
         != sha256_json(geometry_provenance)
-        or model_path.resolve()
-        != Path(str(geometry_provenance["model"])).resolve()
+        or model_path.resolve() != Path(str(geometry_provenance["model"])).resolve()
         or not model_path.is_dir()
         or input_manifest.get("model_sha256") != sha256_directory(model_path)
-        or input_manifest.get("model_sha256")
-        != geometry_provenance["model_sha256"]
+        or input_manifest.get("model_sha256") != geometry_provenance["model_sha256"]
     ):
         raise RuntimeError("teacher inputs are cross-wired to stale provenance")
     if len(sites) != 8:
@@ -167,10 +131,9 @@ def main() -> None:
         raise RuntimeError(f"invalid safe teacher inputs: {safe_all.shape}")
     if harmful_all.shape[1:] != (len(sites), 2048):
         raise RuntimeError(f"invalid harmful teacher inputs: {harmful_all.shape}")
-    if (
-        safe_all.shape[0] != input_manifest.get("safe_count")
-        or harmful_all.shape[0] != input_manifest.get("harmful_response_tokens")
-    ):
+    if safe_all.shape[0] != input_manifest.get("safe_count") or harmful_all.shape[
+        0
+    ] != input_manifest.get("harmful_response_tokens"):
         raise RuntimeError("teacher input tensor counts and manifest disagree")
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -253,7 +216,9 @@ def main() -> None:
                 "cg_iterations": iterations,
                 "cg_residual_ratio": residual_ratio,
             }
-            payload[f"lambda{safe_lambda:g}.{key}.right"] = detector[:, None].contiguous()
+            payload[f"lambda{safe_lambda:g}.{key}.right"] = detector[
+                :, None
+            ].contiguous()
             site_rows.append(row_diagnostics)
             print(json.dumps({"distill": row_diagnostics}), flush=True)
         diagnostics["fits"][site_id] = site_rows

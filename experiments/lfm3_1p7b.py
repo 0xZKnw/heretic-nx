@@ -172,7 +172,7 @@ def mean_kl(base, candidate):
 
 
 @torch.inference_mode()
-def refusals(model, tokenizer, prompts, batch_size):
+def refusals(model, tokenizer, prompts, batch_size, *, max_new_tokens=MAX_NEW_TOKENS):
     from experiments.lfm25_2p6b_residual_stream import (
         REFUSAL_MARKERS,
         normalized_response,
@@ -185,7 +185,7 @@ def refusals(model, tokenizer, prompts, batch_size):
         output = model.generate(
             **batch,
             do_sample=False,
-            max_new_tokens=MAX_NEW_TOKENS,
+            max_new_tokens=max_new_tokens,
             pad_token_id=tokenizer.pad_token_id,
         )
         responses.extend(
@@ -212,6 +212,7 @@ def refusals(model, tokenizer, prompts, batch_size):
         "marker_hits": hits,
         "responses": responses,
         "empty_responses": empty_responses,
+        "max_new_tokens": max_new_tokens,
         "seconds": time.monotonic() - started,
     }
 
@@ -272,7 +273,8 @@ def choose_candidate(candidates, base_markers, *, kl_cap=KL_CAP, max_refusals=No
     eligible = [
         row
         for row in candidates
-        if row["marker_count"] < base_markers
+        if row.get("complete", True)
+        and row["marker_count"] < base_markers
         and 0 <= row["kl"] <= kl_cap
         and (max_refusals is None or row["marker_count"] <= max_refusals)
         and row.get("empty_responses", 0) == 0
@@ -476,6 +478,12 @@ def search(args):
     report["selected"] = {
         k: selected[k] for k in ("profile", "scale", "kl", "marker_count")
     }
+    publish_checkpoint(args, model, tokenizer, report)
+
+
+def publish_checkpoint(args, model, tokenizer, report):
+    if args.output.exists():
+        raise FileExistsError(f"refusing to overwrite {args.output}")
     # Publish a complete local research checkpoint, preserving the official custom code and license.
     args.output.parent.mkdir(parents=True, exist_ok=True)
     import tempfile

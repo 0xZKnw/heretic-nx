@@ -165,3 +165,65 @@ two-marker development limit, while the KL cap stays fixed at 0.05. The next
 focused screen compares first mixer block 4/6/8 and scales 1.75/2/2.25, with
 all FFN weights untouched. Final reporting still uses 96-token generations;
 no short-window result is promoted as the complete refusal count.
+
+### Sparse full-checkpoint rejection
+
+The block-4 mixer-only scale-2 candidate has SHA-256
+`860e0bde8e06079fb15ca72827af36a9c7a4236362b6a6185348106510a0c83d`.
+Development KL is 0.049425 with 1/24 full-length markers, but the paired
+104-row retest is **KL 0.062113 and 8 markers**. The safe arm has one marker;
+MCQ is 130/241 (53.94%). Both the required KL ceiling and the four-marker
+target gate fail, so the checkpoint is rejected and its regenerable weights
+removed after preserving the build, validation and audit metadata. All FFN
+weights and all non-target tensors were bit-identical to the base.
+
+### Conditional teacher distillation
+
+Reuse the benign-penalized input-detector approach from the existing Gemma/LFM
+experiments, with the previous 4/104 NX checkpoint as teacher. The solver was
+extracted unchanged from the LFM2.5 experiment into `optimize/ridge.py` to avoid
+an incidental MLX import chain; the old API delegates with its original 40-step,
+1e-5 tolerance and 1e-4 ridge settings. Nine deterministic float32 parity cases
+(dimensions 4/16/32 and penalties 1/10/100) match the pinned original solver
+bit for bit, including iteration counts and residuals. Independent small
+dense-solve tests validate the numerical objective; this is not a formal proof.
+
+Collect 1,024 benign prompt-boundary inputs from the hash-partitioned training
+geometry set and teacher trajectories for 128 harmful geometry prompts. The
+trajectory collector runs 32 new tokens and samples every fourth forward,
+excluding finished rows. Both caches contain 1,024 BF16 states per projection.
+Search and test prompts are not used to fit these detectors.
+
+For each of 40 sites, approximate the teacher output-delta field with a fixed
+rank-one output axis (randomized PCA, q=5, two iterations, seed 1703+site), then
+fit the input detector against the target field with a benign covariance
+penalty. Merge the resulting rank-one additive delta into the original weights.
+This profile deliberately does not restore row norms; norm drift and full-model
+behavior must be measured instead of inheriting the residual-profile claim.
+
+The solver is a 40-iteration approximation: none of the 120 production fits
+reaches its 1e-5 stopping tolerance. Maximum relative residual is 0.0683,
+0.3360 and 3.8287 for penalties 1, 10 and 100. These are disclosed incomplete
+numerical solves, not convergence certificates. Median target-fit errors are
+0.0667, 0.1609 and 0.3703 respectively. Candidate promotion depends on actual
+model evaluation, not an assumed optimum of these fits.
+
+An initial cache write failed because penalty trials shared the same axis
+storage. Independent serialized storage fixes this without changing tensor
+values; a regression test reproduces the original safetensors rejection and
+checks the roundtrip. Input caches were retained, so no GPU collection was
+repeated. Partial 16-token refusal screens cannot qualify as full results.
+
+| Benign penalty | Delta scale | Development KL | Full markers / 24 |
+| --- | ---: | ---: | ---: |
+| 1 | 1 | 0.014805 | 2 |
+| 1 | 1.5 | 0.042346 | 0 |
+| 10 | 1.5 | 0.026208 | 0 |
+| 100 | 1.5 | 0.020696 | 1 |
+
+The other five trials fail the KL cap or a monotone short-prefix marker bound;
+their counts are recorded as incomplete, not invented full scores. Two frozen
+frontier points are tested at the full 96-token/104-row protocol: minimum
+development KL (penalty 1, scale 1) and zero development markers (penalty 10,
+scale 1.5). The former gets KL **0.020613 but 12/104 markers**, failing the
+target gate. The second paired retest is in progress.

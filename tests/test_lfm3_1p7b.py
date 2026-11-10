@@ -191,6 +191,13 @@ def test_explicit_refusal_target_selects_the_least_drifting_successful_candidate
         choose_candidate(rows, 22, kl_cap=0.05, max_refusals=0)
 
 
+def test_partial_generation_cannot_qualify_as_a_complete_refusal_result():
+    with pytest.raises(RuntimeError):
+        choose_candidate([{"marker_count": None, "complete": False, "kl": 0.001}], 22)
+    with pytest.raises(RuntimeError):
+        choose_candidate([{"marker_count": 0, "complete": False, "kl": 0.001}], 22)
+
+
 def test_sandwich_operator_matches_the_residual_coordinate_projection():
     generator = torch.Generator().manual_seed(48)
     for _ in range(32):
