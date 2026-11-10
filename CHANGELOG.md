@@ -2,6 +2,30 @@
 
 All notable public changes to Heretic NX are documented here.
 
+## Unreleased
+
+### Added
+
+- A pinned BF16 LFM3-1.7B research runner using the existing NX residual-stream
+  editor, with raw and capability-protected directions, hash-partitioned
+  geometry/search data, a locked independent evaluation command, and Metal,
+  CUDA, and CPU execution paths. Only Metal has been exercised with the full
+  checkpoint. Thanks to @0xZKnw for the existing NX engine and LFM protocols.
+- Regression checks for LFM3's three block types, constant early convolution
+  states, hook cleanup, output preservation, KL and candidate selection.
+
+### Fixed
+
+- Install the GGUF test dependency in CI.
+- Fit Ling dense-site geometry on the training split, preserving the public
+  test split for evaluation and recording the source split in its manifest.
+
+### Known limits
+
+- LFM3's sandwich normalization makes the weight edit an empirically evaluated
+  intervention. Lexical markers and first-token MCQ/KL checks do not establish
+  semantic task success or broad capability preservation.
+
 ## 0.3.0 — 2026-08-30
 
 ### Added

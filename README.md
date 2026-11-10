@@ -20,6 +20,47 @@ separate implementation around deterministic manifests, streaming statistics,
 low-rank geometry and reproducible evaluation. Comparative reports explicitly
 pin the external checkpoint used as the Heretic baseline.
 
+## LFM3 1.7B — BF16 research runner
+
+`experiments/lfm3_1p7b.py` applies the existing NX residual-stream editor to the
+official `LiquidAI/LFM3-1.7B` checkpoint. It verifies the checkpoint hash and all
+24 hybrid blocks, preserves the custom model code and license, and refuses to
+overwrite an existing output. Geometry uses 128 examples per class; search
+uses 24 group-disjoint training examples per class. The first four blocks are
+excluded from editing because the earliest convolutions see only the fixed
+chat suffix at the collection position.
+
+Install the `experiments` extra. The measured environment uses Python 3.12,
+PyTorch 2.15.0 and Transformers 5.22.2. Download the pinned source with `hf`:
+
+```bash
+hf download LiquidAI/LFM3-1.7B \
+  --revision 1da06bec6a819da10b54c67e5c90972b46d81871 \
+  --local-dir checkpoints/lfm3-1p7b
+python -m experiments.lfm3_1p7b search \
+  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-Heretic-NX \
+  --device mps --batch-size 4 --scales 0.1 0.25 0.5 1.0
+python -m experiments.lfm3_1p7b validate \
+  --source checkpoints/lfm3-1p7b --output outputs/LFM3-1.7B-Heretic-NX \
+  --device mps --batch-size 4
+```
+
+Use `--device cuda` or `--device cpu` on other hardware; those full-checkpoint
+paths have not been exercised. Search compares raw and rank-4
+capability-protected directions, restores immutable original weights between
+candidates, and selects reduced lexical refusals under a first-token benign
+KL cap of 0.03. Run `validate` only after freezing the selected checkpoint: it
+reloads the saved weights and compares both arms on the complete pinned test
+splits plus the existing paired ARC/HellaSwag/MMLU slice. The MCQ protocol
+selects the highest-logit A/B/C/D token with thinking disabled; it does not
+measure free-form reasoning.
+
+Reports are saved under `runs/lfm3-1p7b` and alongside the checkpoint. LFM3's
+sandwich normalization makes this an empirical weight intervention rather
+than an exact projector in the residual stream. This is a research artifact:
+lexical refusal counts, first-token KL and a narrow capability slice do not
+constitute semantic certification. The command never uploads model weights.
+
 ## LFM2.5 8B-A1B — conditional direct-Q8 release
 
 The 8B-A1B release introduces conditional direct-Q8 deltas: an eight-site
