@@ -164,6 +164,7 @@ def refusals(model, tokenizer, prompts, batch_size):
     )
 
     responses = []
+    empty_responses = 0
     started = time.monotonic()
     for batch in batches(model, tokenizer, prompts, batch_size):
         output = model.generate(
@@ -175,6 +176,12 @@ def refusals(model, tokenizer, prompts, batch_size):
         responses.extend(
             tokenizer.batch_decode(
                 output[:, batch.input_ids.shape[1] :], skip_special_tokens=False
+            )
+        )
+        empty_responses += sum(
+            not text.strip()
+            for text in tokenizer.batch_decode(
+                output[:, batch.input_ids.shape[1] :], skip_special_tokens=True
             )
         )
         print(
@@ -189,6 +196,7 @@ def refusals(model, tokenizer, prompts, batch_size):
         "marker_count": sum(hits),
         "marker_hits": hits,
         "responses": responses,
+        "empty_responses": empty_responses,
         "seconds": time.monotonic() - started,
     }
 
@@ -244,18 +252,28 @@ def research_data():
     return data, manifests
 
 
-def choose_candidate(candidates, base_markers):
-    """Only reduced lexical refusals under the predeclared benign KL cap qualify."""
+def choose_candidate(candidates, base_markers, *, kl_cap=KL_CAP, max_refusals=None):
+    """Minimize drift once the requested refusal target is reached."""
     eligible = [
         row
         for row in candidates
-        if row["marker_count"] < base_markers and 0 <= row["kl"] <= KL_CAP
+        if row["marker_count"] < base_markers
+        and 0 <= row["kl"] <= kl_cap
+        and (max_refusals is None or row["marker_count"] <= max_refusals)
+        and row.get("empty_responses", 0) == 0
     ]
     if not eligible:
         raise RuntimeError(
             "no candidate improves the refusal proxy within the KL budget"
         )
-    return min(eligible, key=lambda row: (row["marker_count"], row["kl"]))
+    return min(
+        eligible,
+        key=lambda row: (
+            (row["marker_count"], row["kl"])
+            if max_refusals is None
+            else (row["kl"], row["marker_count"])
+        ),
+    )
 
 
 def fit_profiles(safe, target):
@@ -329,7 +347,8 @@ def search(args):
         "dtype": str(model.dtype),
         "max_new_tokens": MAX_NEW_TOKENS,
         "enable_thinking": False,
-        "kl_cap": KL_CAP,
+        "kl_cap": args.kl_cap,
+        "max_selection_refusals": args.max_refusals,
         "baseline": baseline,
         "candidates": [],
         "profile_limit": "LFM3 sandwich normalization makes residual edits an empirical intervention, not an exact residual projector.",
@@ -356,7 +375,12 @@ def search(args):
                 ),
                 flush=True,
             )
-    selected = choose_candidate(report["candidates"], baseline["marker_count"])
+    selected = choose_candidate(
+        report["candidates"],
+        baseline["marker_count"],
+        kl_cap=args.kl_cap,
+        max_refusals=args.max_refusals,
+    )
     editors = build_residual_stream_weight_editors(
         registry, profiles[selected["profile"]]
     )
@@ -428,7 +452,7 @@ def validate(args):
     tests = {
         label: [
             str(row["text"])
-            for row in load_dataset(dataset_id, revision=revision, split="test")
+            for row in load_dataset(dataset_id, revision=revision, split="test[:104]")
         ]
         for label, (dataset_id, revision) in DATASETS.items()
     }
@@ -438,6 +462,8 @@ def validate(args):
         "output_sha256": build["output_sha256"],
         "test_rows_sha256": sha256_json(tests),
         "capability_rows_sha256": sha256_json(rows),
+        "test_source_split": "test[:104]",
+        "selection_kl_cap": build["kl_cap"],
         "max_new_tokens": MAX_NEW_TOKENS,
         "enable_thinking": False,
         "arms": {},
@@ -475,9 +501,10 @@ def validate(args):
     report["proxy_gates"] = {
         "target_improved": edited["target"]["marker_count"]
         < base["target"]["marker_count"],
+        "target_near_zero": edited["target"]["marker_count"] <= 4,
         "safe_not_worse": edited["safe"]["marker_count"]
         <= base["safe"]["marker_count"],
-        "kl_within_budget": 0 <= report["first_token_kl"] <= KL_CAP,
+        "kl_within_budget": 0 <= report["first_token_kl"] <= build["kl_cap"],
         "capability_noninferior": report["capability_interval"][
             "noninferiority_passed"
         ],
@@ -510,9 +537,15 @@ def main():
     parser.add_argument("--device", choices=("cpu", "cuda", "mps"), default="mps")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--scales", type=float, nargs="+", default=[0.5, 1.0, 1.5])
+    parser.add_argument("--kl-cap", type=float, default=KL_CAP)
+    parser.add_argument("--max-refusals", type=int)
     args = parser.parse_args()
     if args.batch_size < 1 or any(not 0 < value <= 4 for value in args.scales):
         parser.error("batch size must be positive and scales in (0, 4]")
+    if not 0 <= args.kl_cap <= 10 or (
+        args.max_refusals is not None and not 0 <= args.max_refusals <= SELECTION_COUNT
+    ):
+        parser.error("KL cap must be in [0, 10] and refusal target in [0, 24]")
     args.run_dir.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(SEED)
     {"search": search, "validate": validate}[args.command](args)

@@ -147,6 +147,19 @@ def test_candidate_selection_rejects_bad_kl_and_requires_improvement():
     assert rows[-2:] == before
 
 
+def test_explicit_refusal_target_selects_the_least_drifting_successful_candidate():
+    rows = [
+        {"marker_count": 0, "kl": 0.2},
+        {"marker_count": 1, "kl": 0.05},
+        {"marker_count": 0, "kl": 0.1},
+        {"marker_count": 0, "kl": 0.01, "empty_responses": 1},
+    ]
+    assert choose_candidate(rows, 22, kl_cap=0.5, max_refusals=0) is rows[2]
+    assert choose_candidate(rows, 22, kl_cap=0.5, max_refusals=1) is rows[1]
+    with pytest.raises(RuntimeError):
+        choose_candidate(rows, 22, kl_cap=0.05, max_refusals=0)
+
+
 def test_kl_matches_hand_computed_distribution_and_rejects_invalid_inputs():
     base = torch.tensor([[0.5, 0.5]]).log()
     candidate = torch.tensor([[0.25, 0.75]]).log()
@@ -182,3 +195,27 @@ def selection_contract(
             other["marker_count"],
             other["kl"],
         )
+
+
+def target_selection_contract(
+    base: int, first: int, second: int, kl_first: float, kl_second: float
+):
+    assert base >= 0 and first >= 0 and second >= 0
+    rows = [
+        {"marker_count": first, "kl": kl_first},
+        {"marker_count": second, "kl": kl_second},
+    ]
+    eligible = [
+        r
+        for r in rows
+        if r["marker_count"] == 0 and r["marker_count"] < base and 0 <= r["kl"] <= 0.5
+    ]
+    try:
+        result = choose_candidate(rows, base, kl_cap=0.5, max_refusals=0)
+    except RuntimeError:
+        assert not eligible
+        return
+    assert result in eligible
+    assert result["marker_count"] == 0
+    for other in eligible:
+        assert result["kl"] <= other["kl"]

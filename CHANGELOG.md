@@ -13,10 +13,13 @@ All notable public changes to Heretic NX are documented here.
   checkpoint. Thanks to @0xZKnw for the existing NX engine and LFM protocols.
 - Regression checks for LFM3's three block types, constant early convolution
   states, hook cleanup, output preservation, KL and candidate selection.
+- An explicit zero-development-refusal target with drift-minimizing selection
+  and a declared KL budget; empty generated answers cannot satisfy the target.
 
 ### Fixed
 
-- Install the GGUF test dependency in CI.
+- Install GGUF and experiment test dependencies in CI.
+- Bound LFM3 safe-response validation to 104 pinned test rows.
 - Fit Ling dense-site geometry on the training split, preserving the public
   test split for evaluation and recording the source split in its manifest.
 
