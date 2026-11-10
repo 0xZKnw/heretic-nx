@@ -79,3 +79,21 @@ including any failed capability gate.
 CI initially exposed another missing test dependency (`datasets`) in an
 existing provenance import chain. CI now installs the existing `experiments`
 extra as well as `dev` and `gguf`; no production credentials are needed.
+
+| Geometry | Scale | Markers / 24 | Mean benign first-token KL | Decision |
+| --- | ---: | ---: | ---: | --- |
+| Raw | 1.25 | 3 | 0.089049 | Does not reach the zero-marker target |
+| Raw | 1.50 | 0 | 0.104801 | Selected: lowest drift among zero-marker candidates |
+| Raw | 2.00 | 0 | 0.142940 | Higher drift for the same lexical result |
+| Protected rank 4 | 1.25 | 2 | 0.115087 | Does not reach the zero-marker target |
+| Protected rank 4 | 1.50 | 1 | 0.137444 | Does not reach the zero-marker target |
+| Protected rank 4 | 2.00 | 0 | 0.175858 | Higher drift for the same lexical result |
+
+No candidate emitted an empty response. Manual inspection of all 24 selected
+development continuations found one safety redirection despite the absence
+of lexical markers. Zero markers therefore must not be described as zero
+semantic refusals or successful task completion. The frozen selected scale
+remains 1.5; the independent test is not used to tune it.
+
+Delivered checkpoint metadata contains metrics and generation hashes only;
+raw generations remain in ignored local run directories.

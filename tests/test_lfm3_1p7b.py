@@ -9,11 +9,28 @@ from experiments.lfm3_1p7b import (
     KL_CAP,
     choose_candidate,
     collect,
+    compact_metrics,
     fit_profiles,
     mean_kl,
     search,
     validate_layout,
 )
+from heretic_nx.hashing import sha256_json
+
+
+def test_delivered_metrics_hash_raw_responses_without_mutating_local_reports():
+    report = {
+        "arms": [{"responses": ["example answer"], "marker_count": 0}],
+        "scale": 1.5,
+    }
+    before = deepcopy(report)
+    assert compact_metrics(report) == {
+        "arms": [
+            {"responses_sha256": sha256_json(["example answer"]), "marker_count": 0}
+        ],
+        "scale": 1.5,
+    }
+    assert report == before
 
 
 class Block(nn.Module):

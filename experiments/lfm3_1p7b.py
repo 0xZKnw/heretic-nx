@@ -54,6 +54,20 @@ def write_json(path: Path, value: object) -> None:
     path.write_bytes(canonical_json(value) + b"\n")
 
 
+def compact_metrics(value):
+    """Ship metrics and response hashes; retain raw generations only in local runs."""
+    if isinstance(value, dict):
+        return {
+            ("responses_sha256" if key == "responses" else key): (
+                sha256_json(item) if key == "responses" else compact_metrics(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [compact_metrics(item) for item in value]
+    return value
+
+
 def validate_layout(model):
     """Reject missing branches and architectures other than the pinned LFM3."""
     config = model.config
@@ -408,7 +422,7 @@ def search(args):
             ):
                 shutil.copy2(path, staging / path.name)
         report["output_sha256"] = sha256_file(staging / "model.safetensors")
-        write_json(staging / "HERETIC_NX_BUILD.json", report)
+        write_json(staging / "HERETIC_NX_BUILD.json", compact_metrics(report))
         staging.rename(args.output)
     write_json(args.run_dir / "search.json", report)
     print(
@@ -513,9 +527,7 @@ def validate(args):
         "Research artifact; lexical proxies and a narrow first-token MCQ slice, without semantic certification."
     )
     write_json(args.run_dir / "validation.json", report)
-    shutil.copy2(
-        args.run_dir / "validation.json", args.output / "HERETIC_NX_VALIDATION.json"
-    )
+    write_json(args.output / "HERETIC_NX_VALIDATION.json", compact_metrics(report))
     print(
         json.dumps(
             {
